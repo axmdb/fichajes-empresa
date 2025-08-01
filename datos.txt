@@ -1,0 +1,5 @@
+usuario --> nombre, apellido 
+pin --> patrón de 4 digitos obligatorios
+
+
+también hay que crear la parte del administrador, para que con una secuencia de PIN, te navege hasta el panel ADMIN con CREACIÓN DE USUARIOS.
