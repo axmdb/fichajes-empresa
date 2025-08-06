@@ -20,7 +20,7 @@ mongoose.connect(process.env.MONGO_URI)
 // ✅ Rutas protegidas con middleware de autenticación
 app.use('/api/fichaje', authMiddleware, fichajeRoutes);
 app.use('/api/firma', authMiddleware, firmaRoutes);
-app.use('/api/users', authMiddleware, userRoutes);
+app.use('/api/users', userRoutes);
 
 // Ruta pública simple
 app.get('/', (req, res) => {
