@@ -1,6 +1,7 @@
-/**
- * @format
- */
+
+
+// 1️⃣ Importa el gesture handler **antes de todo lo demás**
+import 'react-native-gesture-handler';
 
 import { AppRegistry } from 'react-native';
 import App from './App';
