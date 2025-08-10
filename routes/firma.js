@@ -28,7 +28,7 @@ router.post('/', async (req, res) => {
     const fileName = `firma_${type}.png`;
 
     // 🔹 Guardar en carpeta por almacén
-    const folderPath = `firmas/${almacenId}/${user.name}_${user.pin}/${fecha}/${fileName}`;
+    const folderPath = `${almacenId}/firmas/${user.name}_${user.pin}/${fecha}/${fileName}`;
 
     const uploadResult = await s3.upload({
       Bucket: process.env.AWS_BUCKET_NAME,

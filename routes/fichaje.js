@@ -147,7 +147,7 @@ async function generateExcelAndUpload(almacenId) {
   const now = new Date();
   const fecha = now.toISOString().split('T')[0];
   const fileName = `fichajes-${fecha}.xlsx`;
-  const s3Key = `fichajes/${almacenId}/excel/${fecha}/${fileName}`;
+  const s3Key = `${almacenId}/excel/${fecha}/${fileName}`;
 
   const buffer = await workbook.xlsx.writeBuffer();
 
