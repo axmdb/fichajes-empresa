@@ -10,9 +10,9 @@ const s3 = new AWS.S3({
 });
 
 router.post('/', async (req, res) => {
-  const { pin, signature, type } = req.body;
+  const { pin, signature, type, almacenId } = req.body;
 
-  if (!pin || !signature || !type) {
+  if (!pin || !signature || !type || !almacenId) {
     return res.status(400).json({ message: 'Faltan datos' });
   }
 
@@ -24,9 +24,11 @@ router.post('/', async (req, res) => {
     const buffer = Buffer.from(base64Data, 'base64');
 
     const now = new Date();
-    const fecha = now.toISOString().split('T')[0]; // YYYY-MM-DD
+    const fecha = now.toISOString().split('T')[0];
     const fileName = `firma_${type}.png`;
-    const folderPath = `firmas/${user.name}_${user.pin}/${fecha}/${fileName}`;
+
+    // 🔹 Guardar en carpeta por almacén
+    const folderPath = `firmas/${almacenId}/${user.name}_${user.pin}/${fecha}/${fileName}`;
 
     const uploadResult = await s3.upload({
       Bucket: process.env.AWS_BUCKET_NAME,
@@ -41,11 +43,7 @@ router.post('/', async (req, res) => {
     console.error(err);
     res.status(500).json({ message: 'Error al guardar firma en S3' });
   }
-
-  console.log('🔑 AWS Key:', process.env.AWS_ACCESS_KEY_ID);
-  console.log('🔒 AWS Secret:', process.env.AWS_SECRET_ACCESS_KEY);
-
-
 });
+
 
 module.exports = router;

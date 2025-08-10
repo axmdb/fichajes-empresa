@@ -14,8 +14,8 @@ const s3 = new AWS.S3({
 // POST /api/fichaje
 router.post('/', async (req, res) => {
   //
-  const { pin, type } = req.body;
-
+  const { pin, type, almacenId } = req.body;
+  
   if (!pin || !type) {
     return res.status(400).json({ message: "Faltan datos (PIN o tipo)" });
   }
@@ -74,7 +74,7 @@ router.post('/', async (req, res) => {
     });
 
     await registro.save();
-    await generateExcelAndUpload();
+    await generateExcelAndUpload(almacenId);
 
     res.status(200).json({
       message: "Fichaje registrado correctamente",
@@ -122,7 +122,7 @@ router.get('/estado', async (req, res) => {
 
 
 // Función para generar y subir Excel a S3
-async function generateExcelAndUpload() {
+async function generateExcelAndUpload(almacenId) {
   const fichajes = await Fichaje.find().populate('user');
 
   const workbook = new ExcelJS.Workbook();
@@ -144,12 +144,10 @@ async function generateExcelAndUpload() {
     });
   });
 
-
   const now = new Date();
-  const fecha = now.toISOString().split('T')[0]; // YYYY-MM-DD
-  const hora = now.toTimeString().split(' ')[0].replace(/:/g, '-'); // HH-mm-ss
+  const fecha = now.toISOString().split('T')[0];
   const fileName = `fichajes-${fecha}.xlsx`;
-  const s3Key = `excel/${fecha}/${fileName}`;
+  const s3Key = `fichajes/${almacenId}/excel/${fecha}/${fileName}`;
 
   const buffer = await workbook.xlsx.writeBuffer();
 
@@ -160,6 +158,7 @@ async function generateExcelAndUpload() {
     ContentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   }).promise();
 }
+
 
 
 module.exports = router;
