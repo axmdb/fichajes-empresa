@@ -13,23 +13,23 @@ const s3 = new AWS.S3({
 
 // POST /api/fichaje
 router.post('/', async (req, res) => {
-  //
   const { pin, type, almacenId } = req.body;
   
-  if (!pin || !type) {
-    return res.status(400).json({ message: "Faltan datos (PIN o tipo)" });
+  if (!pin || !type || !almacenId) {
+    return res.status(400).json({ message: "Faltan datos (PIN, tipo o almacenId)" });
   }
 
   try {
-    const user = await User.findOne({ pin });
-    if (!user) return res.status(404).json({ message: "PIN incorrecto" });
+    // 🔹 Filtrar usuario por PIN y almacén
+    const user = await User.findOne({ pin, almacenId });
+    if (!user) return res.status(404).json({ message: "PIN incorrecto o no pertenece a este almacén" });
 
-    const fichajes = await Fichaje.find({ user: user._id }).sort({ date: -1 });
+    // 🔹 Filtrar fichajes por usuario y almacén
+    const fichajes = await Fichaje.find({ user: user._id, almacenId }).sort({ date: -1 });
 
     const ultimaEntrada = fichajes.find(f => f.type === 'entrada');
     const ultimaSalida = fichajes.find(f => f.type === 'salida');
 
-    // 🔒 Validación para SALIDA
     if (type === 'salida') {
       if (!ultimaEntrada) {
         return res.status(400).json({ message: 'No puedes fichar salida sin haber fichado entrada.' });
@@ -46,8 +46,6 @@ router.post('/', async (req, res) => {
       }
     }
 
-
-    // 🔒 Validación para DESAYUNO
     if (type === 'desayuno_inicio') {
       if (!ultimaEntrada || (ultimaSalida && ultimaSalida.date > ultimaEntrada.date)) {
         return res.status(400).json({ message: 'Debes fichar entrada antes de iniciar desayuno.' });
@@ -58,17 +56,15 @@ router.post('/', async (req, res) => {
       const ultimoInicioDesayuno = fichajes.find(f => f.type === 'desayuno_inicio');
       const ultimoFinDesayuno = fichajes.find(f => f.type === 'desayuno_fin');
 
-      if (
-        !ultimoInicioDesayuno ||
-        (ultimoFinDesayuno && ultimoFinDesayuno.date > ultimoInicioDesayuno.date)
-      ) {
+      if (!ultimoInicioDesayuno || (ultimoFinDesayuno && ultimoFinDesayuno.date > ultimoInicioDesayuno.date)) {
         return res.status(400).json({ message: 'Debes iniciar desayuno antes de finalizarlo.' });
       }
     }
 
-    // ✅ Guardar nuevo fichaje
+    // ✅ Guardar fichaje con almacenId
     const registro = new Fichaje({
       user: user._id,
+      almacenId,
       type,
       date: new Date(),
     });
@@ -78,10 +74,7 @@ router.post('/', async (req, res) => {
 
     res.status(200).json({
       message: "Fichaje registrado correctamente",
-      user: {
-        name: user.name,
-        role: user.role,
-      },
+      user: { name: user.name, role: user.role },
       type: registro.type,
       timestamp: registro.date,
     });
@@ -92,17 +85,17 @@ router.post('/', async (req, res) => {
   }
 });
 
-// GET /api/fichaje/estado?pin=1234
+// GET /api/fichaje/estado
 router.get('/estado', async (req, res) => {
-  const { pin } = req.query;
+  const { pin, almacenId } = req.query;
 
-  if (!pin) return res.status(400).json({ message: "Falta el PIN" });
+  if (!pin || !almacenId) return res.status(400).json({ message: "Faltan PIN o almacenId" });
 
   try {
-    const user = await User.findOne({ pin });
+    const user = await User.findOne({ pin, almacenId });
     if (!user) return res.status(404).json({ message: "Usuario no encontrado" });
 
-    const fichajes = await Fichaje.find({ user: user._id }).sort({ date: -1 });
+    const fichajes = await Fichaje.find({ user: user._id, almacenId }).sort({ date: -1 });
 
     const ultimaEntrada = fichajes.find(f => f.type === 'entrada');
     const ultimaSalida = fichajes.find(f => f.type === 'salida');
@@ -119,11 +112,9 @@ router.get('/estado', async (req, res) => {
   }
 });
 
-
-
-// Función para generar y subir Excel a S3
+// Función para generar y subir Excel filtrado por almacén
 async function generateExcelAndUpload(almacenId) {
-  const fichajes = await Fichaje.find().populate('user');
+  const fichajes = await Fichaje.find({ almacenId }).populate('user');
 
   const workbook = new ExcelJS.Workbook();
   const worksheet = workbook.addWorksheet('Fichajes');
@@ -158,6 +149,7 @@ async function generateExcelAndUpload(almacenId) {
     ContentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   }).promise();
 }
+
 
 
 

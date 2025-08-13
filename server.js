@@ -10,7 +10,7 @@ const userRoutes = require('./routes/users');
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: '5mb' }));
+app.use(express.json({ limit: '10mb' }));
 
 // 🔌 Conexión a MongoDB
 mongoose.connect(process.env.MONGO_URI)
@@ -20,7 +20,7 @@ mongoose.connect(process.env.MONGO_URI)
 // ✅ Rutas protegidas con middleware de autenticación
 app.use('/api/fichaje', authMiddleware, fichajeRoutes);
 app.use('/api/firma', authMiddleware, firmaRoutes);
-app.use('/api/users', userRoutes);
+app.use('/api/users', authMiddleware, userRoutes);
 
 // Ruta pública simple
 app.get('/', (req, res) => {
