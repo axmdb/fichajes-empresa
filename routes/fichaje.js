@@ -143,7 +143,7 @@ const now = new Date();
   const year = String(now.getFullYear()).slice(-2); // últimos 2 dígitos
   const fecha = `${day}-${month}-${year}`; // 25-13-08
 
-  const fileName = `fichajes-${almacenId}-${fecha}.xlsx`;
+  const fileName = `fichajes-${almacenId}(${fecha}).xlsx`;
   const s3Key = `${almacenId}/excel/${fecha}/${fileName}`;
 
   const buffer = await workbook.xlsx.writeBuffer();
