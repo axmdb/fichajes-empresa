@@ -135,8 +135,14 @@ async function generateExcelAndUpload(almacenId) {
     });
   });
 
-  const now = new Date();
-  const fecha = now.toISOString().split('T')[0];
+const now = new Date();
+
+// Obtenemos partes con cero a la izquierda
+  const day = String(now.getDate()).padStart(2, '0');
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const year = String(now.getFullYear()).slice(-2); // últimos 2 dígitos
+  const fecha = `${day}-${month}-${year}`; // 25-13-08
+  
   const fileName = `fichajes-${fecha}.xlsx`;
   const s3Key = `${almacenId}/excel/${fecha}/${fileName}`;
 
