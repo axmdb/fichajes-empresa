@@ -9,49 +9,61 @@ const s3 = new AWS.S3({
   region: process.env.AWS_REGION,
 });
 
+// Limpieza
+function clean(str) {
+  return String(str)
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9]/g, "_");
+}
+
+// POST /api/firma
 router.post('/', async (req, res) => {
   const { pin, signature, type, almacenId } = req.body;
 
-  // 🔹 Validación completa
   if (!pin || !signature || !type || !almacenId) {
-    return res.status(400).json({ message: 'Faltan datos (pin, firma, tipo o almacenId)' });
+    return res.status(400).json({
+      message: "Faltan datos (pin, firma, tipo o almacenId)"
+    });
   }
 
   try {
-    // 🔹 Buscar usuario SOLO dentro de este almacén
     const user = await User.findOne({ pin, almacenId });
-    if (!user) {
-      return res.status(404).json({ message: 'PIN no válido o usuario no pertenece a este almacén' });
-    }
+    if (!user)
+      return res.status(404).json({
+        message: "PIN no válido o usuario no pertenece al almacén"
+      });
 
-    const base64Data = signature.replace(/^data:image\/png;base64,/, '');
-    const buffer = Buffer.from(base64Data, 'base64');
+    const base64 = signature.replace(/^data:image\/png;base64,/, "");
+    const buffer = Buffer.from(base64, "base64");
 
+    // fecha
     const now = new Date();
-    const fecha = now.toISOString().split('T')[0];
-    const fileName = `firma_${type}.png`;
+    const dd = String(now.getDate()).padStart(2, "0");
+    const mm = String(now.getMonth() + 1).padStart(2, "0");
+    const yyyy = now.getFullYear();
+    const fecha = `${dd}-${mm}-${yyyy}`;
 
-    // 🔹 Guardar en carpeta por almacén y usuario
-    const folderPath = `${almacenId}/firmas/${user.name}_${user.pin}/${fecha}/${fileName}`;
+    const userFolder = `${clean(user.name)}_${user.pin}`;
 
-    const uploadResult = await s3.upload({
+    const key = `${user.almacenId}/${userFolder}/${fecha}/firma_${type}.png`;
+
+    const upload = await s3.upload({
       Bucket: process.env.AWS_BUCKET_NAME,
-      Key: folderPath,
+      Key: key,
       Body: buffer,
-      ContentEncoding: 'base64',
-      ContentType: 'image/png',
+      ContentEncoding: "base64",
+      ContentType: "image/png",
     }).promise();
 
     res.status(200).json({
-      message: 'Firma guardada en S3',
-      url: uploadResult.Location
+      message: "Firma guardada correctamente",
+      url: upload.Location
     });
+
   } catch (err) {
     console.error(err);
-    res.status(500).json({ message: 'Error al guardar firma en S3', error: err.message });
+    return res.status(500).json({ message: "Error interno", error: err.message });
   }
 });
-
-
 
 module.exports = router;
