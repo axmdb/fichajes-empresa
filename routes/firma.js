@@ -9,14 +9,15 @@ const s3 = new AWS.S3({
   region: process.env.AWS_REGION,
 });
 
-// Limpieza
 function clean(str) {
   return String(str)
     .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
     .replace(/[^a-zA-Z0-9]/g, "_");
 }
 
+// ---------------------------------
 // POST /api/firma
+// ---------------------------------
 router.post('/', async (req, res) => {
   const { pin, signature, type, almacenId } = req.body;
 
@@ -28,15 +29,15 @@ router.post('/', async (req, res) => {
 
   try {
     const user = await User.findOne({ pin, almacenId });
-    if (!user)
+    if (!user) {
       return res.status(404).json({
         message: "PIN no válido o usuario no pertenece al almacén"
       });
+    }
 
     const base64 = signature.replace(/^data:image\/png;base64,/, "");
     const buffer = Buffer.from(base64, "base64");
 
-    // fecha
     const now = new Date();
     const dd = String(now.getDate()).padStart(2, "0");
     const mm = String(now.getMonth() + 1).padStart(2, "0");
@@ -62,7 +63,10 @@ router.post('/', async (req, res) => {
 
   } catch (err) {
     console.error(err);
-    return res.status(500).json({ message: "Error interno", error: err.message });
+    return res.status(500).json({
+      message: "Error interno",
+      error: err.message
+    });
   }
 });
 
