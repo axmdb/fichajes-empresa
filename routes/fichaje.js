@@ -231,7 +231,7 @@ async function generateUserExcel(user, fichaje) {
   let sheet;
 
   try {
-    // Intentar abrir el excel existente de hoy para este usuario
+    // Intentar cargar el archivo existente
     const existing = await s3
       .getObject({
         Bucket: process.env.AWS_BUCKET_NAME,
@@ -240,8 +240,9 @@ async function generateUserExcel(user, fichaje) {
       .promise();
 
     await workbook.xlsx.load(existing.Body);
-    sheet = workbook.worksheets[0];
+    sheet = workbook.getWorksheet('Fichajes');
 
+    // Si NO existe la hoja
     if (!sheet) {
       sheet = workbook.addWorksheet('Fichajes');
       sheet.columns = [
@@ -250,7 +251,7 @@ async function generateUserExcel(user, fichaje) {
       ];
     }
   } catch (err) {
-    // Si no existe el archivo aún, lo creamos
+    // Archivo NO existe → crear uno nuevo
     sheet = workbook.addWorksheet('Fichajes');
     sheet.columns = [
       { header: 'Tipo', key: 'type', width: 20 },
@@ -258,6 +259,7 @@ async function generateUserExcel(user, fichaje) {
     ];
   }
 
+  // AÑADIR LA NUEVA FILA SIN BORRAR LAS ANTERIORES
   sheet.addRow({
     type: fichaje.type,
     date: now.toLocaleString('es-ES', { timeZone: 'Europe/Madrid' }),
@@ -270,10 +272,13 @@ async function generateUserExcel(user, fichaje) {
       Bucket: process.env.AWS_BUCKET_NAME,
       Key: key,
       Body: buffer,
-      ContentType:
-        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      ContentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     })
     .promise();
+
+   console.log("Excel cargado, filas existentes:", sheet.rowCount);
+ 
 }
+
 
 module.exports = router;
