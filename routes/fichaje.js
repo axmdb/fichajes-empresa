@@ -22,7 +22,8 @@ function clean(str) {
 // -----------------------------
 // POST /api/fichaje
 // -----------------------------
-router.post('/', async (req, res) => {
+router.post('/fichar', async (req, res) => {
+
   const { pin, type, almacenId } = req.body;
 
   if (!pin || !type || !almacenId) {

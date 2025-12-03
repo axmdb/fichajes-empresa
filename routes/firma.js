@@ -10,19 +10,20 @@ const s3 = new AWS.S3({
   region: process.env.AWS_REGION,
 });
 
-// --- LIMPIEZA DE NOMBRES PARA CARPETAS ---
+// Limpiar nombres de carpetas
 function clean(str) {
   return String(str)
-    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")  // quitar acentos
-    .replace(/[^a-zA-Z0-9]/g, "_");                   // solo letras/números
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9]/g, "_");
 }
 
-// ---------------------------------
+// ---------------------------------------------
 // POST /api/firma
-// ---------------------------------
+// ---------------------------------------------
 router.post('/', async (req, res) => {
   const { pin, signature, type, almacenId } = req.body;
 
+  // Validación
   if (!pin || !signature || !type || !almacenId) {
     return res.status(400).json({
       message: "Faltan datos (pin, firma, tipo o almacenId)"
@@ -30,7 +31,7 @@ router.post('/', async (req, res) => {
   }
 
   try {
-    // Buscar usuario en el almacén correcto
+    // Buscar usuario por PIN y almacén
     const user = await User.findOne({ pin, almacenId });
     if (!user) {
       return res.status(404).json({
@@ -38,25 +39,24 @@ router.post('/', async (req, res) => {
       });
     }
 
-    // Preparar imagen
+    // Conversión base64 → buffer
     const base64 = signature.replace(/^data:image\/png;base64,/, "");
     const buffer = Buffer.from(base64, "base64");
 
-    // Formato de fecha DD-MM-YYYY
+    // Fecha actual
     const now = new Date();
     const dd = String(now.getDate()).padStart(2, "0");
     const mm = String(now.getMonth() + 1).padStart(2, "0");
     const yyyy = now.getFullYear();
     const fecha = `${dd}-${mm}-${yyyy}`;
 
-    // Carpeta del usuario
+    // Carpeta de usuario limpia
     const userFolder = `${clean(user.name)}_${user.pin}`;
 
-    // Nombre ARCHIVO — igual que el fichaje, mismo sitio
-    const fileName = `firma_${type}_${userFolder}.png`;
+    // Nombre del archivo → firma_entrada / firma_salida / firma_desayuno_inicio / firma_desayuno_fin
+    const fileName = `firma_${type}.png`;
 
-    // RUTA FINAL
-    const key = `${almacenId}/${userFolder}/${fecha}/${fileName}`;
+    const key = `${user.almacenId}/${userFolder}/${fecha}/${fileName}`;
 
     // Subir a S3
     const upload = await s3.upload({
@@ -67,14 +67,13 @@ router.post('/', async (req, res) => {
       ContentType: "image/png",
     }).promise();
 
-    res.status(200).json({
+    return res.status(200).json({
       message: "Firma guardada correctamente",
-      url: upload.Location,
-      s3key: key
+      url: upload.Location
     });
 
   } catch (err) {
-    console.error("Error en firma:", err);
+    console.error("Error al guardar firma:", err);
     return res.status(500).json({
       message: "Error interno",
       error: err.message
