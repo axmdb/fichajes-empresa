@@ -43,13 +43,13 @@ router.post('/', async (req, res) => {
   const { pin, type, almacenId } = req.body;
 
   if (!pin || !type || !almacenId) {
-    return res.status(400).json({ message: 'Faltan datos' });
+    return res.status(400).json({ message: 'Faltan datos (pin, tipo o almacenId)' });
   }
 
   try {
     const user = await User.findOne({ pin, almacenId });
     if (!user) {
-      console.log("❌ Usuario NO encontrado con ese PIN");
+      console.log("❌ Usuario NO encontrado con ese PIN y almacen");
       return res.status(404).json({ message: 'PIN incorrecto o no pertenece a este almacén' });
     }
 
@@ -64,6 +64,11 @@ router.post('/', async (req, res) => {
     }).sort({ date: 1 });
 
     console.log("📊 Fichajes HOY:", fichajes.length);
+    if (fichajes.length) {
+      console.log(
+        fichajes.map(f => `${f.type} - ${f.date.toISOString()}`).join("\n")
+      );
+    }
 
     // Clasificación
     const entradas = fichajes.filter(f => f.type === 'entrada');
@@ -71,10 +76,10 @@ router.post('/', async (req, res) => {
     const desayunosInicio = fichajes.filter(f => f.type === 'desayuno_inicio');
     const desayunosFin = fichajes.filter(f => f.type === 'desayuno_fin');
 
-    const ultimaEntrada = entradas.at(-1) || null;
-    const ultimaSalida = salidas.at(-1) || null;
-    const ultimoDesayunoInicio = desayunosInicio.at(-1) || null;
-    const ultimoDesayunoFin = desayunosFin.at(-1) || null;
+    const ultimaEntrada = entradas[entradas.length - 1] || null;
+    const ultimaSalida = salidas[salidas.length - 1] || null;
+    const ultimoDesayunoInicio = desayunosInicio[desayunosInicio.length - 1] || null;
+    const ultimoDesayunoFin = desayunosFin[desayunosFin.length - 1] || null;
 
     console.log("📌 Estado actual del usuario:");
     console.log(" - ultimaEntrada:", ultimaEntrada?.date);
@@ -148,6 +153,8 @@ router.post('/', async (req, res) => {
     console.log("✔ Fichaje guardado:", registro.type, registro.date);
 
     // ---------------- ACTUALIZAR ESTADO ----------------
+    // Estos valores los devolvemos por si algún día modificas el frontend,
+    // pero ahora mismo la tablet se basa sobre todo en GET /estado.
 
     const haHechoEntrada =
       type === 'entrada'
@@ -161,7 +168,7 @@ router.post('/', async (req, res) => {
         ? true
         : type === 'desayuno_fin'
         ? false
-        : ultimoDesayunoInicio &&
+        : !!ultimoDesayunoInicio &&
           (!ultimoDesayunoFin || ultimoDesayunoInicio.date > ultimoDesayunoFin.date);
 
     // ---------------- EXCEL ----------------
@@ -182,13 +189,73 @@ router.post('/', async (req, res) => {
 });
 
 /* -----------------------------------
+ *  GET /api/fichaje/estado
+ *  (Usado por la app para saber si mostrar
+ *   "Inicio desayuno" o "Fin desayuno")
+ * -----------------------------------*/
+router.get('/estado', async (req, res) => {
+  const { pin, almacenId } = req.query;
+
+  console.log("\n🔎 GET /api/fichaje/estado", req.query);
+
+  if (!pin || !almacenId) {
+    return res.status(400).json({ message: 'Faltan PIN o almacenId' });
+  }
+
+  try {
+    const user = await User.findOne({ pin, almacenId });
+    if (!user) {
+      console.log("❌ Usuario no encontrado en /estado");
+      return res.status(404).json({ message: 'Usuario no encontrado' });
+    }
+
+    const { inicio, fin } = getDayRange();
+
+    const fichajes = await Fichaje.find({
+      user: user._id,
+      almacenId,
+      date: { $gte: inicio, $lte: fin },
+    }).sort({ date: 1 });
+
+    console.log("📊 [ESTADO] Fichajes HOY:", fichajes.length);
+
+    const entradas = fichajes.filter(f => f.type === 'entrada');
+    const salidas = fichajes.filter(f => f.type === 'salida');
+    const desayunosInicio = fichajes.filter(f => f.type === 'desayuno_inicio');
+    const desayunosFin = fichajes.filter(f => f.type === 'desayuno_fin');
+
+    const ultimaEntrada = entradas[entradas.length - 1] || null;
+    const ultimaSalida = salidas[salidas.length - 1] || null;
+    const ultimoDesayunoInicio = desayunosInicio[desayunosInicio.length - 1] || null;
+    const ultimoDesayunoFin = desayunosFin[desayunosFin.length - 1] || null;
+
+    const haHechoEntrada =
+      !!ultimaEntrada && (!ultimaSalida || ultimaEntrada.date > ultimaSalida.date);
+
+    const desayunoIniciado =
+      !!ultimoDesayunoInicio &&
+      (!ultimoDesayunoFin || ultimoDesayunoInicio.date > ultimoDesayunoFin.date);
+
+    console.log("📌 [ESTADO] haHechoEntrada:", haHechoEntrada, "desayunoIniciado:", desayunoIniciado);
+
+    return res.status(200).json({ haHechoEntrada, desayunoIniciado });
+  } catch (err) {
+    console.error('[GET /api/fichaje/estado] ERROR:', err);
+    return res.status(500).json({ message: 'Error interno', error: err.message });
+  }
+});
+
+/* -----------------------------------
  *  GENERAR EXCEL POR USUARIO Y DÍA
  * -----------------------------------*/
 async function generateUserExcel(user, fichaje) {
   console.log("\n📄 GENERANDO EXCEL...");
 
   const now = new Date(fichaje.date);
-  const fecha = now.toLocaleDateString('es-ES').replace(/\//g, '-');
+  const dd = String(now.getDate()).padStart(2, '0');
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const yyyy = now.getFullYear();
+  const fecha = `${dd}-${mm}-${yyyy}`;
 
   const userFolder = `${clean(user.name)}_${user.pin}`;
   const fileName = `fichajes_${fecha}_${userFolder}.xlsx`;
@@ -210,7 +277,7 @@ async function generateUserExcel(user, fichaje) {
     sheet = workbook.getWorksheet('Fichajes');
 
     if (!sheet) {
-      console.log("⚠ Hoja inexistente, creando...");
+      console.log("⚠ Hoja 'Fichajes' inexistente, creando...");
       sheet = workbook.addWorksheet('Fichajes');
       sheet.columns = [
         { header: 'Tipo', key: 'type', width: 20 },
@@ -228,9 +295,10 @@ async function generateUserExcel(user, fichaje) {
       { header: 'Tipo', key: 'type', width: 20 },
       { header: 'Fecha y Hora', key: 'date', width: 30 },
     ];
+
+    console.log("📄 Hoja nueva creada.");
   }
 
-  // Añadir la nueva fila
   const fechaHora = now.toLocaleString('es-ES', { timeZone: 'Europe/Madrid' });
   console.log("➕ Añadiendo fila:", fichaje.type, fechaHora);
 
