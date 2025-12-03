@@ -29,7 +29,8 @@ function formatDate(date) {
 
 // ---------- ARGUMENTOS ----------
 const args = require("minimist")(process.argv.slice(2));
-const pin = args.pin;
+const pin = String(args.pin).padStart(4, "0");
+
 const almacenId = args.almacen;
 
 if (!pin || !almacenId) {
