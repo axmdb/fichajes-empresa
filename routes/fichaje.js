@@ -266,6 +266,29 @@ async function generateUserExcel(user, fichaje) {
   const workbook = new ExcelJS.Workbook();
   let sheet;
 
+  // función helper para asegurar columnas y keys SIEMPRE
+  function ensureColumns(ws) {
+    if (!ws.columns || ws.columns.length === 0) {
+      console.log("🧱 Definiendo columnas (no había ninguna)...");
+      ws.columns = [
+        { header: 'Tipo', key: 'type', width: 20 },
+        { header: 'Fecha y Hora', key: 'date', width: 30 },
+      ];
+    } else {
+      console.log("🧱 Ajustando keys de columnas existentes...");
+      if (ws.columns[0]) {
+        ws.columns[0].key = 'type';
+        ws.columns[0].header = ws.columns[0].header || 'Tipo';
+        ws.columns[0].width = ws.columns[0].width || 20;
+      }
+      if (ws.columns[1]) {
+        ws.columns[1].key = 'date';
+        ws.columns[1].header = ws.columns[1].header || 'Fecha y Hora';
+        ws.columns[1].width = ws.columns[1].width || 30;
+      }
+    }
+  }
+
   try {
     console.log("🔍 Intentando cargar archivo desde S3...");
     const existing = await s3
@@ -274,30 +297,25 @@ async function generateUserExcel(user, fichaje) {
 
     console.log("✔ Archivo encontrado, cargando...");
     await workbook.xlsx.load(existing.Body);
-    sheet = workbook.getWorksheet('Fichajes');
 
+    sheet = workbook.getWorksheet('Fichajes');
     if (!sheet) {
       console.log("⚠ Hoja 'Fichajes' inexistente, creando...");
       sheet = workbook.addWorksheet('Fichajes');
-      sheet.columns = [
-        { header: 'Tipo', key: 'type', width: 20 },
-        { header: 'Fecha y Hora', key: 'date', width: 30 },
-      ];
     }
 
+    // MUY IMPORTANTE: asegurar columnas y keys
+    ensureColumns(sheet);
+
     console.log("📄 Filas antes de añadir:", sheet.rowCount);
-    // Log de contenido antes
-    const prevRows = sheet.getSheetValues().slice(1); // índice 0 es null
+    const prevRows = sheet.getSheetValues().slice(1);
     console.log("📄 Contenido antes:", prevRows);
 
   } catch (err) {
     console.log("⚠ Archivo NO encontrado, creando nuevo:", err.code);
 
     sheet = workbook.addWorksheet('Fichajes');
-    sheet.columns = [
-      { header: 'Tipo', key: 'type', width: 20 },
-      { header: 'Fecha y Hora', key: 'date', width: 30 },
-    ];
+    ensureColumns(sheet);
 
     console.log("📄 Hoja nueva creada (solo cabeceras).");
   }
@@ -305,6 +323,7 @@ async function generateUserExcel(user, fichaje) {
   const fechaHora = now.toLocaleString('es-ES', { timeZone: 'Europe/Madrid' });
   console.log("➕ Añadiendo fila:", fichaje.type, fechaHora);
 
+  // ahora sí, con las columnas con key definidas, esto rellenará bien la fila
   sheet.addRow({
     type: fichaje.type,
     date: fechaHora,
@@ -329,6 +348,7 @@ async function generateUserExcel(user, fichaje) {
 
   console.log("✔ Excel subido correctamente");
 }
+
 
 
 
