@@ -20,6 +20,7 @@ function clean(str) {
     .replace(/[^a-zA-Z0-9]/g, '_');
 }
 
+// Rango del día
 function getDayRange(date = new Date()) {
   const inicio = new Date(date);
   inicio.setHours(0, 0, 0, 0);
@@ -42,13 +43,13 @@ router.post('/', async (req, res) => {
   const { pin, type, almacenId } = req.body;
 
   if (!pin || !type || !almacenId) {
-    return res.status(400).json({ message: 'Faltan datos (pin, tipo o almacenId)' });
+    return res.status(400).json({ message: 'Faltan datos' });
   }
 
   try {
     const user = await User.findOne({ pin, almacenId });
     if (!user) {
-      console.log("❌ Usuario NO encontrado con ese PIN y almacen");
+      console.log("❌ Usuario NO encontrado con ese PIN");
       return res.status(404).json({ message: 'PIN incorrecto o no pertenece a este almacén' });
     }
 
@@ -62,32 +63,30 @@ router.post('/', async (req, res) => {
       date: { $gte: inicio, $lte: fin },
     }).sort({ date: 1 });
 
-    console.log("📊 Fichajes de HOY:", fichajes.length);
-    console.log(fichajes.map(f => `${f.type} - ${f.date}`).join("\n"));
+    console.log("📊 Fichajes HOY:", fichajes.length);
 
+    // Clasificación
     const entradas = fichajes.filter(f => f.type === 'entrada');
     const salidas = fichajes.filter(f => f.type === 'salida');
     const desayunosInicio = fichajes.filter(f => f.type === 'desayuno_inicio');
     const desayunosFin = fichajes.filter(f => f.type === 'desayuno_fin');
 
-    const ultimaEntrada = entradas[entradas.length - 1] || null;
-    const ultimaSalida = salidas[salidas.length - 1] || null;
-    const ultimoDesayunoInicio = desayunosInicio[desayunosInicio.length - 1] || null;
-    const ultimoDesayunoFin = desayunosFin[desayunosFin.length - 1] || null;
+    const ultimaEntrada = entradas.at(-1) || null;
+    const ultimaSalida = salidas.at(-1) || null;
+    const ultimoDesayunoInicio = desayunosInicio.at(-1) || null;
+    const ultimoDesayunoFin = desayunosFin.at(-1) || null;
 
-    console.log("📌 Estado actual:");
-    console.log(" - última entrada:", ultimaEntrada?.date);
-    console.log(" - última salida:", ultimaSalida?.date);
-    console.log(" - último desayuno inicio:", ultimoDesayunoInicio?.date);
-    console.log(" - último desayuno fin:", ultimoDesayunoFin?.date);
+    console.log("📌 Estado actual del usuario:");
+    console.log(" - ultimaEntrada:", ultimaEntrada?.date);
+    console.log(" - ultimaSalida:", ultimaSalida?.date);
+    console.log(" - desayuno_inicio:", ultimoDesayunoInicio?.date);
+    console.log(" - desayuno_fin:", ultimoDesayunoFin?.date);
 
-    // --- VALIDACIONES DEL FLUJO ---
+    // ---------------- VALIDACIONES ----------------
+
     if (type === 'entrada') {
       if (ultimaEntrada && (!ultimaSalida || ultimaEntrada.date > ultimaSalida.date)) {
-        console.log("❌ Entrada no permitida (ya hay una entrada activa)");
-        return res.status(400).json({
-          message: 'Ya has fichado entrada y no has salido todavía.',
-        });
+        return res.status(400).json({ message: 'Ya has fichado entrada y no has salido.' });
       }
     }
 
@@ -96,10 +95,7 @@ router.post('/', async (req, res) => {
         ultimaEntrada && (!ultimaSalida || ultimaEntrada.date > ultimaSalida.date);
 
       if (!entradaActiva) {
-        console.log("❌ Desayuno inicio sin entrada previa");
-        return res.status(400).json({
-          message: 'Debes fichar entrada antes del desayuno.',
-        });
+        return res.status(400).json({ message: 'Debes fichar entrada antes del desayuno.' });
       }
 
       const desayunoAbierto =
@@ -107,10 +103,7 @@ router.post('/', async (req, res) => {
         (!ultimoDesayunoFin || ultimoDesayunoInicio.date > ultimoDesayunoFin.date);
 
       if (desayunoAbierto) {
-        console.log("❌ Ya hay un desayuno iniciado sin cerrar");
-        return res.status(400).json({
-          message: 'Ya tienes un desayuno iniciado que no has finalizado.',
-        });
+        return res.status(400).json({ message: 'Debes cerrar el desayuno anterior.' });
       }
     }
 
@@ -120,26 +113,17 @@ router.post('/', async (req, res) => {
         (!ultimoDesayunoFin || ultimoDesayunoInicio.date > ultimoDesayunoFin.date);
 
       if (!desayunoAbierto) {
-        console.log("❌ Desayuno fin sin desayuno inicio");
-        return res.status(400).json({
-          message: 'Debes iniciar desayuno antes de finalizarlo.',
-        });
+        return res.status(400).json({ message: 'Debes iniciar desayuno antes de finalizarlo.' });
       }
     }
 
     if (type === 'salida') {
       if (!ultimaEntrada) {
-        console.log("❌ Salida sin entrada");
-        return res.status(400).json({
-          message: 'No puedes fichar salida sin haber fichado entrada.',
-        });
+        return res.status(400).json({ message: 'No puedes fichar salida sin entrada.' });
       }
 
       if (ultimaSalida && ultimaSalida.date > ultimaEntrada.date) {
-        console.log("❌ Doble salida no permitida");
-        return res.status(400).json({
-          message: 'Ya fichaste salida después de la última entrada.',
-        });
+        return res.status(400).json({ message: 'Ya fichaste salida después de la entrada.' });
       }
 
       const desayunoAbierto =
@@ -147,14 +131,12 @@ router.post('/', async (req, res) => {
         (!ultimoDesayunoFin || ultimoDesayunoInicio.date > ultimoDesayunoFin.date);
 
       if (desayunoAbierto) {
-        console.log("❌ Salida con desayuno abierto");
-        return res.status(400).json({
-          message: 'Debes finalizar el desayuno antes de fichar salida.',
-        });
+        return res.status(400).json({ message: 'Debes finalizar el desayuno antes.' });
       }
     }
 
-    // --- GUARDAR FICHAJE ---
+    // ---------------- GUARDAR FICHAJE ----------------
+
     const registro = new Fichaje({
       user: user._id,
       almacenId,
@@ -163,17 +145,36 @@ router.post('/', async (req, res) => {
     });
 
     await registro.save();
-    console.log("✔ Fichaje guardado en Mongo:", registro);
+    console.log("✔ Fichaje guardado:", registro.type, registro.date);
 
-    // Excel
+    // ---------------- ACTUALIZAR ESTADO ----------------
+
+    const haHechoEntrada =
+      type === 'entrada'
+        ? true
+        : type === 'salida'
+        ? false
+        : !!ultimaEntrada && (!ultimaSalida || ultimaEntrada.date > ultimaSalida.date);
+
+    const desayunoIniciado =
+      type === 'desayuno_inicio'
+        ? true
+        : type === 'desayuno_fin'
+        ? false
+        : ultimoDesayunoInicio &&
+          (!ultimoDesayunoFin || ultimoDesayunoInicio.date > ultimoDesayunoFin.date);
+
+    // ---------------- EXCEL ----------------
     await generateUserExcel(user, registro);
 
     return res.status(200).json({
       message: 'Fichaje registrado correctamente',
-      user: { name: user.name },
+      haHechoEntrada,
+      desayunoIniciado,
       type: registro.type,
       timestamp: registro.date,
     });
+
   } catch (err) {
     console.error('[POST /api/fichaje] ERROR:', err);
     return res.status(500).json({ message: 'Error interno', error: err.message });
@@ -181,16 +182,13 @@ router.post('/', async (req, res) => {
 });
 
 /* -----------------------------------
- *  EXCEL CON LOGS
+ *  GENERAR EXCEL POR USUARIO Y DÍA
  * -----------------------------------*/
 async function generateUserExcel(user, fichaje) {
   console.log("\n📄 GENERANDO EXCEL...");
 
   const now = new Date(fichaje.date);
-  const dd = String(now.getDate()).padStart(2, '0');
-  const mm = String(now.getMonth() + 1).padStart(2, '0');
-  const yyyy = now.getFullYear();
-  const fecha = `${dd}-${mm}-${yyyy}`;
+  const fecha = now.toLocaleDateString('es-ES').replace(/\//g, '-');
 
   const userFolder = `${clean(user.name)}_${user.pin}`;
   const fileName = `fichajes_${fecha}_${userFolder}.xlsx`;
@@ -204,18 +202,15 @@ async function generateUserExcel(user, fichaje) {
   try {
     console.log("🔍 Intentando cargar archivo desde S3...");
     const existing = await s3
-      .getObject({
-        Bucket: process.env.AWS_BUCKET_NAME,
-        Key: key,
-      })
+      .getObject({ Bucket: process.env.AWS_BUCKET_NAME, Key: key })
       .promise();
 
-    console.log("✔ Archivo encontrado en S3. Cargando...");
+    console.log("✔ Archivo encontrado, cargando...");
     await workbook.xlsx.load(existing.Body);
     sheet = workbook.getWorksheet('Fichajes');
 
     if (!sheet) {
-      console.log("⚠ No había hoja llamada Fichajes. Creando...");
+      console.log("⚠ Hoja inexistente, creando...");
       sheet = workbook.addWorksheet('Fichajes');
       sheet.columns = [
         { header: 'Tipo', key: 'type', width: 20 },
@@ -223,29 +218,28 @@ async function generateUserExcel(user, fichaje) {
       ];
     }
 
-    console.log("📄 Filas existentes ANTES de añadir:", sheet.rowCount);
+    console.log("📄 Filas antes de añadir:", sheet.rowCount);
 
   } catch (err) {
-    console.log("⚠ Archivo NO encontrado en S3 o error cargando:", err.code);
+    console.log("⚠ Archivo NO encontrado, creando nuevo:", err.code);
 
     sheet = workbook.addWorksheet('Fichajes');
     sheet.columns = [
       { header: 'Tipo', key: 'type', width: 20 },
       { header: 'Fecha y Hora', key: 'date', width: 30 },
     ];
-
-    console.log("📄 Hoja nueva creada.");
   }
 
-  // Añadir la fila
-  console.log("➕ Añadiendo fila:", fichaje.type, now);
+  // Añadir la nueva fila
+  const fechaHora = now.toLocaleString('es-ES', { timeZone: 'Europe/Madrid' });
+  console.log("➕ Añadiendo fila:", fichaje.type, fechaHora);
 
   sheet.addRow({
     type: fichaje.type,
-    date: now.toLocaleString('es-ES', { timeZone: 'Europe/Madrid' }),
+    date: fechaHora,
   });
 
-  console.log("📄 Filas DESPUÉS de añadir:", sheet.rowCount);
+  console.log("📄 Filas después de añadir:", sheet.rowCount);
 
   const buffer = await workbook.xlsx.writeBuffer();
 
@@ -255,11 +249,12 @@ async function generateUserExcel(user, fichaje) {
       Bucket: process.env.AWS_BUCKET_NAME,
       Key: key,
       Body: buffer,
-      ContentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      ContentType:
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     })
     .promise();
 
-  console.log("✔ Excel subido correctamente a S3");
+  console.log("✔ Excel subido correctamente");
 }
 
 module.exports = router;
