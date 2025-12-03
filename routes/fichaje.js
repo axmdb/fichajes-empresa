@@ -286,6 +286,9 @@ async function generateUserExcel(user, fichaje) {
     }
 
     console.log("📄 Filas antes de añadir:", sheet.rowCount);
+    // Log de contenido antes
+    const prevRows = sheet.getSheetValues().slice(1); // índice 0 es null
+    console.log("📄 Contenido antes:", prevRows);
 
   } catch (err) {
     console.log("⚠ Archivo NO encontrado, creando nuevo:", err.code);
@@ -296,7 +299,7 @@ async function generateUserExcel(user, fichaje) {
       { header: 'Fecha y Hora', key: 'date', width: 30 },
     ];
 
-    console.log("📄 Hoja nueva creada.");
+    console.log("📄 Hoja nueva creada (solo cabeceras).");
   }
 
   const fechaHora = now.toLocaleString('es-ES', { timeZone: 'Europe/Madrid' });
@@ -308,6 +311,8 @@ async function generateUserExcel(user, fichaje) {
   });
 
   console.log("📄 Filas después de añadir:", sheet.rowCount);
+  const newRows = sheet.getSheetValues().slice(1);
+  console.log("📄 Contenido después:", newRows);
 
   const buffer = await workbook.xlsx.writeBuffer();
 
@@ -324,5 +329,7 @@ async function generateUserExcel(user, fichaje) {
 
   console.log("✔ Excel subido correctamente");
 }
+
+
 
 module.exports = router;
