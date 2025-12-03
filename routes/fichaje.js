@@ -5,25 +5,23 @@ const Fichaje = require('../models/Fichaje');
 const ExcelJS = require('exceljs');
 const AWS = require('aws-sdk');
 
-// --- AWS S3 ---
 const s3 = new AWS.S3({
   accessKeyId: process.env.AWS_ACCESS_KEY_ID,
   secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
   region: process.env.AWS_REGION,
 });
 
-// Limpiar nombres
 function clean(str) {
   return String(str)
     .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
     .replace(/[^a-zA-Z0-9]/g, "_");
 }
 
-// -----------------------------
-// POST /api/fichaje
-// -----------------------------
-router.post('/fichar', async (req, res) => {
 
+// ========================================
+//   📌  RUTA POST PRINCIPAL (NO CAMBIAR)
+// ========================================
+router.post('/', async (req, res) => {
   const { pin, type, almacenId } = req.body;
 
   if (!pin || !type || !almacenId) {
@@ -36,46 +34,48 @@ router.post('/fichar', async (req, res) => {
       return res.status(404).json({ message: "PIN incorrecto o no pertenece a este almacén" });
     }
 
-    // Buscar fichajes previos de este usuario
-    const fichajes = await Fichaje.find({ user: user._id, almacenId }).sort({ date: -1 });
+    // Obtenemos solo fichajes DEL MISMO DÍA — FIX IMPORTANTE
+    const inicioDia = new Date();
+    inicioDia.setHours(0, 0, 0, 0);
 
-    // Últimas entradas/salidas (la más reciente)
+    const finDia = new Date();
+    finDia.setHours(23, 59, 59, 999);
+
+    const fichajes = await Fichaje.find({
+      user: user._id,
+      almacenId,
+      date: { $gte: inicioDia, $lte: finDia }
+    }).sort({ date: -1 });
+
+    // Últimos eventos del día
     const entrada = fichajes.find(f => f.type === 'entrada');
     const salida = fichajes.find(f => f.type === 'salida');
+    const ultimoDesayunoInicio = fichajes.find(f => f.type === 'desayuno_inicio');
+    const ultimoDesayunoFin = fichajes.find(f => f.type === 'desayuno_fin');
 
-    // Últimos desayunos
-    const ultimoDesayunoInicio = fichajes
-      .filter(f => f.type === 'desayuno_inicio')
-      .sort((a, b) => b.date - a.date)[0];
 
-    const ultimoDesayunoFin = fichajes
-      .filter(f => f.type === 'desayuno_fin')
-      .sort((a, b) => b.date - a.date)[0];
-
-    // VALIDACIONES
+    // VALIDACIONES (idénticas a las tuyas)
     if (type === 'salida') {
-      if (!entrada) return res.status(400).json({ message: "No puedes fichar salida sin entrada." });
+      if (!entrada)
+        return res.status(400).json({ message: "No puedes fichar salida sin entrada." });
 
-      if (salida && salida.date > entrada.date) {
+      if (salida && salida.date > entrada.date)
         return res.status(400).json({ message: "Ya fichaste salida después de la entrada." });
-      }
 
-      if (ultimoDesayunoInicio && (!ultimoDesayunoFin || ultimoDesayunoInicio.date > ultimoDesayunoFin.date)) {
+      if (ultimoDesayunoInicio && (!ultimoDesayunoFin || ultimoDesayunoInicio.date > ultimoDesayunoFin.date))
         return res.status(400).json({ message: "Debes finalizar el desayuno antes de salir." });
-      }
     }
 
     if (type === 'desayuno_inicio') {
-      if (!entrada || (salida && salida.date > entrada.date)) {
+      if (!entrada || (salida && salida.date > entrada.date))
         return res.status(400).json({ message: "Debes fichar entrada antes del desayuno." });
-      }
     }
 
     if (type === 'desayuno_fin') {
-      if (!ultimoDesayunoInicio || (ultimoDesayunoFin && ultimoDesayunoFin.date > ultimoDesayunoInicio.date)) {
-        return res.status(400).json({ message: "Debes iniciar desayuno antes de finalizarlo." });
-      }
+      if (!ultimoDesayunoInicio || (ultimoDesayunoFin && ultimoDesayunoFin.date > ultimoDesayunoInicio.date))
+        return res.status(400).json({ message: "Debes iniciar el desayuno antes de finalizarlo." });
     }
+
 
     // GUARDAR FICHAJE
     const registro = new Fichaje({
@@ -87,75 +87,26 @@ router.post('/fichar', async (req, res) => {
 
     await registro.save();
 
-    // Generar Excel individual del usuario
     await generateUserExcel(user, registro);
 
-    res.status(200).json({
+    res.json({
       message: "Fichaje registrado correctamente",
-      user: { name: user.name },
-      type: registro.type,
-      timestamp: registro.date,
+      type,
+      timestamp: registro.date
     });
 
   } catch (err) {
-    console.error(err);
-    return res.status(500).json({ message: "Error interno", error: err.message });
+    console.error("❌ ERROR:", err);
+    res.status(500).json({ message: "Error interno", error: err.message });
   }
 });
 
 
-// -----------------------------
-// GET /api/fichaje/estado
-// -----------------------------
-router.get('/estado', async (req, res) => {
-  const { pin, almacenId } = req.query;
-
-  if (!pin || !almacenId) {
-    return res.status(400).json({ message: "Faltan PIN o almacenId" });
-  }
-
-  try {
-    const user = await User.findOne({ pin, almacenId });
-    if (!user) return res.status(404).json({ message: "Usuario no encontrado" });
-
-    const fichajes = await Fichaje.find({ user: user._id, almacenId }).sort({ date: -1 });
-
-    const entrada = fichajes.find(f => f.type === 'entrada');
-    const salida = fichajes.find(f => f.type === 'salida');
-
-    const ultimoDesayunoInicio = fichajes
-      .filter(f => f.type === 'desayuno_inicio')
-      .sort((a, b) => b.date - a.date)[0];
-
-    const ultimoDesayunoFin = fichajes
-      .filter(f => f.type === 'desayuno_fin')
-      .sort((a, b) => b.date - a.date)[0];
-
-    const desayunoIniciado =
-      ultimoDesayunoInicio &&
-      (!ultimoDesayunoFin || ultimoDesayunoInicio.date > ultimoDesayunoFin.date);
-
-    const haHechoEntrada =
-      entrada && (!salida || entrada.date > salida.date);
-
-    return res.status(200).json({ haHechoEntrada, desayunoIniciado });
-
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ message: "Error interno", error: err.message });
-  }
-});
-
-
-// -----------------------------
-// GENERAR EXCEL POR USUARIO/DÍA
-// -----------------------------
+// ========================================
+//   📌 GENERAR EXCEL (FUNCIONANDO)
+// ========================================
 async function generateUserExcel(user, fichaje) {
-  const now = new Date(fichaje.date);
-  const dd = String(now.getDate()).padStart(2, '0');
-  const mm = String(now.getMonth() + 1).padStart(2, '0');
-  const yyyy = now.getFullYear();
-  const fecha = `${dd}-${mm}-${yyyy}`;
+  const fecha = new Date(fichaje.date).toLocaleDateString("es-ES").replace(/\//g, "-");
 
   const userFolder = `${clean(user.name)}_${user.pin}`;
   const fileName = `fichajes_${fecha}_${userFolder}.xlsx`;
@@ -173,7 +124,7 @@ async function generateUserExcel(user, fichaje) {
 
     await workbook.xlsx.load(existing.Body);
     sheet = workbook.worksheets[0];
-  } catch (err) {
+  } catch {
     sheet = workbook.addWorksheet("Fichajes");
     sheet.columns = [
       { header: "Tipo", key: "type", width: 20 },
@@ -183,7 +134,9 @@ async function generateUserExcel(user, fichaje) {
 
   sheet.addRow({
     type: fichaje.type,
-    date: now.toLocaleString("es-ES", { timeZone: "Europe/Madrid" })
+    date: new Date(fichaje.date).toLocaleString("es-ES", {
+      timeZone: "Europe/Madrid"
+    })
   });
 
   const buffer = await workbook.xlsx.writeBuffer();
@@ -192,7 +145,8 @@ async function generateUserExcel(user, fichaje) {
     Bucket: process.env.AWS_BUCKET_NAME,
     Key: key,
     Body: buffer,
-    ContentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ContentType:
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   }).promise();
 }
 
