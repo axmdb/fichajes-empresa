@@ -5,12 +5,14 @@ const Fichaje = require('../models/Fichaje');
 const ExcelJS = require('exceljs');
 const AWS = require('aws-sdk');
 
+// --- AWS S3 ---
 const s3 = new AWS.S3({
   accessKeyId: process.env.AWS_ACCESS_KEY_ID,
   secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
   region: process.env.AWS_REGION,
 });
 
+// Limpiar nombres
 function clean(str) {
   return String(str)
     .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
@@ -33,21 +35,31 @@ router.post('/', async (req, res) => {
       return res.status(404).json({ message: "PIN incorrecto o no pertenece a este almacén" });
     }
 
-    // Buscar fichajes previos
+    // Buscar fichajes previos de este usuario
     const fichajes = await Fichaje.find({ user: user._id, almacenId }).sort({ date: -1 });
 
+    // Últimas entradas/salidas (la más reciente)
     const entrada = fichajes.find(f => f.type === 'entrada');
     const salida = fichajes.find(f => f.type === 'salida');
-    const inicioDesayuno = fichajes.find(f => f.type === 'desayuno_inicio');
-    const finDesayuno = fichajes.find(f => f.type === 'desayuno_fin');
+
+    // Últimos desayunos
+    const ultimoDesayunoInicio = fichajes
+      .filter(f => f.type === 'desayuno_inicio')
+      .sort((a, b) => b.date - a.date)[0];
+
+    const ultimoDesayunoFin = fichajes
+      .filter(f => f.type === 'desayuno_fin')
+      .sort((a, b) => b.date - a.date)[0];
 
     // VALIDACIONES
     if (type === 'salida') {
       if (!entrada) return res.status(400).json({ message: "No puedes fichar salida sin entrada." });
+
       if (salida && salida.date > entrada.date) {
         return res.status(400).json({ message: "Ya fichaste salida después de la entrada." });
       }
-      if (inicioDesayuno && (!finDesayuno || finDesayuno.date < inicioDesayuno.date)) {
+
+      if (ultimoDesayunoInicio && (!ultimoDesayunoFin || ultimoDesayunoInicio.date > ultimoDesayunoFin.date)) {
         return res.status(400).json({ message: "Debes finalizar el desayuno antes de salir." });
       }
     }
@@ -59,7 +71,7 @@ router.post('/', async (req, res) => {
     }
 
     if (type === 'desayuno_fin') {
-      if (!inicioDesayuno || (finDesayuno && finDesayuno.date > inicioDesayuno.date)) {
+      if (!ultimoDesayunoInicio || (ultimoDesayunoFin && ultimoDesayunoFin.date > ultimoDesayunoInicio.date)) {
         return res.status(400).json({ message: "Debes iniciar desayuno antes de finalizarlo." });
       }
     }
@@ -74,6 +86,7 @@ router.post('/', async (req, res) => {
 
     await registro.save();
 
+    // Generar Excel individual del usuario
     await generateUserExcel(user, registro);
 
     res.status(200).json({
@@ -91,7 +104,50 @@ router.post('/', async (req, res) => {
 
 
 // -----------------------------
-// GENERAR EXCEL
+// GET /api/fichaje/estado
+// -----------------------------
+router.get('/estado', async (req, res) => {
+  const { pin, almacenId } = req.query;
+
+  if (!pin || !almacenId) {
+    return res.status(400).json({ message: "Faltan PIN o almacenId" });
+  }
+
+  try {
+    const user = await User.findOne({ pin, almacenId });
+    if (!user) return res.status(404).json({ message: "Usuario no encontrado" });
+
+    const fichajes = await Fichaje.find({ user: user._id, almacenId }).sort({ date: -1 });
+
+    const entrada = fichajes.find(f => f.type === 'entrada');
+    const salida = fichajes.find(f => f.type === 'salida');
+
+    const ultimoDesayunoInicio = fichajes
+      .filter(f => f.type === 'desayuno_inicio')
+      .sort((a, b) => b.date - a.date)[0];
+
+    const ultimoDesayunoFin = fichajes
+      .filter(f => f.type === 'desayuno_fin')
+      .sort((a, b) => b.date - a.date)[0];
+
+    const desayunoIniciado =
+      ultimoDesayunoInicio &&
+      (!ultimoDesayunoFin || ultimoDesayunoInicio.date > ultimoDesayunoFin.date);
+
+    const haHechoEntrada =
+      entrada && (!salida || entrada.date > salida.date);
+
+    return res.status(200).json({ haHechoEntrada, desayunoIniciado });
+
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ message: "Error interno", error: err.message });
+  }
+});
+
+
+// -----------------------------
+// GENERAR EXCEL POR USUARIO/DÍA
 // -----------------------------
 async function generateUserExcel(user, fichaje) {
   const now = new Date(fichaje.date);
@@ -109,26 +165,14 @@ async function generateUserExcel(user, fichaje) {
   let sheet;
 
   try {
-    // Intentar abrir archivo existente
     const existing = await s3.getObject({
       Bucket: process.env.AWS_BUCKET_NAME,
       Key: key
     }).promise();
 
     await workbook.xlsx.load(existing.Body);
-
-    // Usar la PRIMER hoja sin importar el nombre
     sheet = workbook.worksheets[0];
-
-    if (!sheet) {
-      sheet = workbook.addWorksheet("Fichajes");
-      sheet.columns = [
-        { header: "Tipo", key: "type", width: 20 },
-        { header: "Fecha y Hora", key: "date", width: 30 }
-      ];
-    }
   } catch (err) {
-    // Crear nuevo
     sheet = workbook.addWorksheet("Fichajes");
     sheet.columns = [
       { header: "Tipo", key: "type", width: 20 },
@@ -136,7 +180,6 @@ async function generateUserExcel(user, fichaje) {
     ];
   }
 
-  // Añadir registro
   sheet.addRow({
     type: fichaje.type,
     date: now.toLocaleString("es-ES", { timeZone: "Europe/Madrid" })
