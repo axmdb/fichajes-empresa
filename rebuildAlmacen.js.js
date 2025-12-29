@@ -2,17 +2,11 @@ require("dotenv").config();
 const mongoose = require("mongoose");
 const ExcelJS = require("exceljs");
 const AWS = require("aws-sdk");
+
 const User = require("./models/User");
 const Fichaje = require("./models/Fichaje");
 
-// ---------- CONFIG ----------
-const ALMACEN_ID = process.argv[2];
-if (!ALMACEN_ID) {
-  console.error("❌ Uso: node rebuildAllUsersByAlmacen.js <almacenId>");
-  process.exit(1);
-}
-
-// ---------- AWS S3 ----------
+// ---------- AWS ----------
 const s3 = new AWS.S3({
   accessKeyId: process.env.AWS_ACCESS_KEY_ID,
   secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
@@ -26,54 +20,68 @@ function clean(str) {
     .replace(/[^a-zA-Z0-9]/g, "_");
 }
 
-function getMonthKey(date) {
-  const d = new Date(date);
+function getMonthName(date) {
   const months = [
-    'ENERO','FEBRERO','MARZO','ABRIL','MAYO','JUNIO',
-    'JULIO','AGOSTO','SEPTIEMBRE','OCTUBRE','NOVIEMBRE','DICIEMBRE'
+    'ENERO', 'FEBRERO', 'MARZO', 'ABRIL', 'MAYO', 'JUNIO',
+    'JULIO', 'AGOSTO', 'SEPTIEMBRE', 'OCTUBRE', 'NOVIEMBRE', 'DICIEMBRE'
   ];
-  return `${months[d.getMonth()]}_${d.getFullYear()}`;
+  return months[date.getMonth()];
 }
 
-function formatDateTime(date) {
-  return new Date(date).toLocaleString("es-ES", {
-    timeZone: "Europe/Madrid"
-  });
+function getMonthKey(date) {
+  const d = new Date(date);
+  return `${getMonthName(d)}_${d.getFullYear()}`;
 }
+
+// ---------- ARGS ----------
+const args = process.argv.slice(2);
+const almacenIndex = args.indexOf("--almacen");
+
+if (almacenIndex === -1 || !args[almacenIndex + 1]) {
+  console.error("❌ Uso: node rebuildAlmacen.js --almacen almacen3");
+  process.exit(1);
+}
+
+const almacenId = args[almacenIndex + 1];
 
 // ---------- MAIN ----------
 (async () => {
   console.log("🔌 Conectando a MongoDB...");
   await mongoose.connect(process.env.MONGO_URI);
-  console.log("✅ MongoDB conectado");
+  console.log("✅ Conectado a MongoDB");
 
-  console.log(`\n📋 Buscando usuarios del almacén: ${ALMACEN_ID}`);
-  const users = await User.find({ almacenId: ALMACEN_ID });
-  console.log(`✔ Usuarios encontrados: ${users.length}`);
+  console.log(`\n📦 Reconstruyendo almacén: ${almacenId}`);
+
+  const users = await User.find({ almacenId });
+  console.log(`👤 Usuarios encontrados: ${users.length}`);
 
   for (const user of users) {
-    console.log(`\n👤 Usuario: ${user.name} (${user.pin})`);
+    console.log(`\n==============================`);
+    console.log(`👤 ${user.name} (${user.pin})`);
+    console.log(`==============================`);
 
-    const fichajes = await Fichaje.find({ user: user._id })
+    const fichajes = await Fichaje.find({ user: user._id, almacenId })
       .sort({ date: 1 });
 
-    if (fichajes.length === 0) {
-      console.log("⚠ Sin fichajes, saltando");
+    if (!fichajes.length) {
+      console.log("⚠ Sin fichajes, saltando...");
       continue;
     }
 
-    // Agrupar por MES
+    // Agrupar por MES_AÑO
     const porMes = {};
     fichajes.forEach(f => {
-      const mes = getMonthKey(f.date);
-      if (!porMes[mes]) porMes[mes] = [];
-      porMes[mes].push(f);
+      const key = getMonthKey(f.date);
+      if (!porMes[key]) porMes[key] = [];
+      porMes[key].push(f);
     });
 
     const userFolder = `${clean(user.name)}_${user.pin}`;
 
     for (const mes of Object.keys(porMes)) {
-      console.log(`📊 Reconstruyendo Excel: ${mes}`);
+      const registros = porMes[mes];
+
+      console.log(`\n📅 Reconstruyendo ${mes} (${registros.length} fichajes)`);
 
       const workbook = new ExcelJS.Workbook();
       const sheet = workbook.addWorksheet("Fichajes");
@@ -83,19 +91,22 @@ function formatDateTime(date) {
         { header: "Fecha y Hora", key: "date", width: 30 },
       ];
 
-      porMes[mes].forEach(f => {
+      registros.forEach(f => {
         sheet.addRow({
           type: f.type,
-          date: formatDateTime(f.date),
+          date: new Date(f.date).toLocaleString("es-ES", {
+            timeZone: "Europe/Madrid",
+          }),
         });
       });
 
       const fileName = `fichajes_${mes}_${userFolder}.xlsx`;
-      const key = `${ALMACEN_ID}/${userFolder}/${mes}/${fileName}`;
+      const key = `${almacenId}/${userFolder}/${mes}/${fileName}`;
 
       console.log("⬆ Subiendo:", key);
 
       const buffer = await workbook.xlsx.writeBuffer();
+
       await s3.upload({
         Bucket: process.env.AWS_BUCKET_NAME,
         Key: key,
@@ -108,6 +119,6 @@ function formatDateTime(date) {
     }
   }
 
-  console.log("\n🎉 REBUILD COMPLETO DEL ALMACÉN FINALIZADO\n");
+  console.log("\n🎉 REBUILD COMPLETADO PARA TODO EL ALMACÉN");
   process.exit(0);
 })();
