@@ -245,9 +245,8 @@ router.get('/estado', async (req, res) => {
   }
 });
 
-/* -----------------------------------
- *  GENERAR EXCEL POR USUARIO Y DÍA
- * -----------------------------------*/
+/* GENERAR / ACTUALIZAR EXCEL MENSUAL POR USUARIO */
+
 async function generateUserExcel(user, fichaje) {
   console.log("\n📄 GENERANDO EXCEL...");
 

@@ -17,13 +17,21 @@ function clean(str) {
     .replace(/[^a-zA-Z0-9]/g, "_");
 }
 
+// Nombre del mes en mayúsculas
+function getMonthName(date) {
+  const months = [
+    'ENERO', 'FEBRERO', 'MARZO', 'ABRIL', 'MAYO', 'JUNIO',
+    'JULIO', 'AGOSTO', 'SEPTIEMBRE', 'OCTUBRE', 'NOVIEMBRE', 'DICIEMBRE'
+  ];
+  return months[date.getMonth()];
+}
+
 // ---------------------------------------------
 // POST /api/firma
 // ---------------------------------------------
 router.post('/', async (req, res) => {
   const { pin, signature, type, almacenId } = req.body;
 
-  // Validación de datos requeridos
   if (!pin || !signature || !type || !almacenId) {
     return res.status(400).json({
       message: "Faltan datos (pin, firma, tipo o almacenId)"
@@ -31,7 +39,6 @@ router.post('/', async (req, res) => {
   }
 
   try {
-    // Buscar usuario por PIN y almacén
     const user = await User.findOne({ pin, almacenId });
     if (!user) {
       return res.status(404).json({
@@ -39,29 +46,27 @@ router.post('/', async (req, res) => {
       });
     }
 
-    // Convertir base64 → buffer
+    // Base64 → buffer
     const base64 = signature.replace(/^data:image\/png;base64,/, "");
     const buffer = Buffer.from(base64, "base64");
 
-    // Formato fecha DD-MM-YYYY garantizado
     const now = new Date();
+
     const dd = String(now.getDate()).padStart(2, "0");
     const mm = String(now.getMonth() + 1).padStart(2, "0");
     const yyyy = now.getFullYear();
-    const fecha = `${dd}-${mm}-${yyyy}`; // <= carpeta EXACTA 03-12-2025
+    const fecha = `${dd}-${mm}-${yyyy}`;
 
-    // Carpeta de usuario: ejemplo "test11_0099"
+    const mesNombre = getMonthName(now);
+    const carpetaMes = `${mesNombre}_${yyyy}`;
+
     const userFolder = `${clean(user.name)}_${user.pin}`;
-
-    // Archivo de firma
     const fileName = `firma_${type}.png`;
 
-    // Clave final en S3 → carpeta por fecha incluida
-    const key = `${user.almacenId}/${userFolder}/${fecha}/${fileName}`;
+    const key = `${user.almacenId}/${userFolder}/${carpetaMes}/FIRMAS/${fecha}/${fileName}`;
 
     console.log("📌 Guardando firma en S3 con KEY:", key);
 
-    // Subida a S3
     const upload = await s3.upload({
       Bucket: process.env.AWS_BUCKET_NAME,
       Key: key,
