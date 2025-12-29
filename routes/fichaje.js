@@ -248,105 +248,63 @@ router.get('/estado', async (req, res) => {
 /* GENERAR / ACTUALIZAR EXCEL MENSUAL POR USUARIO */
 
 async function generateUserExcel(user, fichaje) {
-  console.log("\n📄 GENERANDO EXCEL...");
+  console.log("\n📄 GENERANDO EXCEL MENSUAL...");
 
   const now = new Date(fichaje.date);
-  const dd = String(now.getDate()).padStart(2, '0');
-  const mm = String(now.getMonth() + 1).padStart(2, '0');
+
   const yyyy = now.getFullYear();
-  const fecha = `${dd}-${mm}-${yyyy}`;
+  const mesNombre = [
+    'ENERO','FEBRERO','MARZO','ABRIL','MAYO','JUNIO',
+    'JULIO','AGOSTO','SEPTIEMBRE','OCTUBRE','NOVIEMBRE','DICIEMBRE'
+  ][now.getMonth()];
 
+  const carpetaMes = `${mesNombre}_${yyyy}`;
   const userFolder = `${clean(user.name)}_${user.pin}`;
-  const fileName = `fichajes_${fecha}_${userFolder}.xlsx`;
-  const key = `${user.almacenId}/${userFolder}/${fecha}/${fileName}`;
+  const fileName = `fichajes_${carpetaMes}_${userFolder}.xlsx`;
 
+  const key = `${user.almacenId}/${userFolder}/${carpetaMes}/${fileName}`;
   console.log("📌 S3 KEY:", key);
 
   const workbook = new ExcelJS.Workbook();
   let sheet;
 
-  // función helper para asegurar columnas y keys SIEMPRE
-  function ensureColumns(ws) {
-    if (!ws.columns || ws.columns.length === 0) {
-      console.log("🧱 Definiendo columnas (no había ninguna)...");
-      ws.columns = [
-        { header: 'Tipo', key: 'type', width: 20 },
-        { header: 'Fecha y Hora', key: 'date', width: 30 },
-      ];
-    } else {
-      console.log("🧱 Ajustando keys de columnas existentes...");
-      if (ws.columns[0]) {
-        ws.columns[0].key = 'type';
-        ws.columns[0].header = ws.columns[0].header || 'Tipo';
-        ws.columns[0].width = ws.columns[0].width || 20;
-      }
-      if (ws.columns[1]) {
-        ws.columns[1].key = 'date';
-        ws.columns[1].header = ws.columns[1].header || 'Fecha y Hora';
-        ws.columns[1].width = ws.columns[1].width || 30;
-      }
-    }
-  }
-
   try {
-    console.log("🔍 Intentando cargar archivo desde S3...");
-    const existing = await s3
-      .getObject({ Bucket: process.env.AWS_BUCKET_NAME, Key: key })
-      .promise();
+    const existing = await s3.getObject({
+      Bucket: process.env.AWS_BUCKET_NAME,
+      Key: key
+    }).promise();
 
-    console.log("✔ Archivo encontrado, cargando...");
     await workbook.xlsx.load(existing.Body);
+    sheet = workbook.getWorksheet('Fichajes') || workbook.addWorksheet('Fichajes');
 
-    sheet = workbook.getWorksheet('Fichajes');
-    if (!sheet) {
-      console.log("⚠ Hoja 'Fichajes' inexistente, creando...");
-      sheet = workbook.addWorksheet('Fichajes');
-    }
-
-    // MUY IMPORTANTE: asegurar columnas y keys
-    ensureColumns(sheet);
-
-    console.log("📄 Filas antes de añadir:", sheet.rowCount);
-    const prevRows = sheet.getSheetValues().slice(1);
-    console.log("📄 Contenido antes:", prevRows);
-
-  } catch (err) {
-    console.log("⚠ Archivo NO encontrado, creando nuevo:", err.code);
-
+  } catch {
     sheet = workbook.addWorksheet('Fichajes');
-    ensureColumns(sheet);
-
-    console.log("📄 Hoja nueva creada (solo cabeceras).");
+    sheet.columns = [
+      { header: 'Tipo', key: 'type', width: 20 },
+      { header: 'Fecha y Hora', key: 'date', width: 30 },
+    ];
   }
 
-  const fechaHora = now.toLocaleString('es-ES', { timeZone: 'Europe/Madrid' });
-  console.log("➕ Añadiendo fila:", fichaje.type, fechaHora);
-
-  // ahora sí, con las columnas con key definidas, esto rellenará bien la fila
   sheet.addRow({
     type: fichaje.type,
-    date: fechaHora,
+    date: new Date(fichaje.date).toLocaleString('es-ES', {
+      timeZone: 'Europe/Madrid'
+    }),
   });
-
-  console.log("📄 Filas después de añadir:", sheet.rowCount);
-  const newRows = sheet.getSheetValues().slice(1);
-  console.log("📄 Contenido después:", newRows);
 
   const buffer = await workbook.xlsx.writeBuffer();
 
-  console.log("⬆ Subiendo archivo a S3...");
-  await s3
-    .upload({
-      Bucket: process.env.AWS_BUCKET_NAME,
-      Key: key,
-      Body: buffer,
-      ContentType:
-        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    })
-    .promise();
+  await s3.upload({
+    Bucket: process.env.AWS_BUCKET_NAME,
+    Key: key,
+    Body: buffer,
+    ContentType:
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  }).promise();
 
-  console.log("✔ Excel subido correctamente");
+  console.log("✔ Excel mensual actualizado");
 }
+
 
 
 
