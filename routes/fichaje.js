@@ -353,10 +353,60 @@ async function generateUserExcel(user, fichaje) {
   console.log("✔ Excel mensual subido correctamente");
 }
 
+// -----------------------------
+// GET /api/fichaje/inspeccion
+// -----------------------------
+router.get('/inspeccion', async (req, res) => {
+  try {
+    const { almacenId, fecha } = req.query;
 
+    const filtro = {};
 
+    if (almacenId) {
+      filtro.almacenId = almacenId;
+    }
 
+    if (fecha) {
+      const inicio = new Date(fecha);
+      inicio.setHours(0, 0, 0, 0);
 
+      const fin = new Date(fecha);
+      fin.setHours(23, 59, 59, 999);
 
+      filtro.date = {
+        $gte: inicio,
+        $lte: fin,
+      };
+    }
+
+    const fichajes = await Fichaje.find(filtro)
+      .populate('user')
+      .sort({ date: 1 });
+
+    return res.status(200).json({
+      ok: true,
+      total: fichajes.length,
+      fichajes: fichajes.map(f => ({
+        id: f._id,
+        trabajador: f.user?.name || 'Sin nombre',
+        pin: f.user?.pin || '',
+        tipo: f.type,
+        fecha: f.date,
+        fechaLocal: new Date(f.date).toLocaleString('es-ES', {
+          timeZone: 'Europe/Madrid',
+        }),
+        almacenId: f.almacenId,
+      })),
+    });
+
+  } catch (err) {
+    console.error('Error en /api/fichaje/inspeccion:', err);
+    return res.status(500).json({
+      ok: false,
+      message: 'Error obteniendo fichajes para inspección',
+      error: err.message,
+    });
+  }
+});
 
 module.exports = router;
