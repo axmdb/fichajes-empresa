@@ -356,14 +356,15 @@ async function generateUserExcel(user, fichaje) {
 // -----------------------------
 // GET /api/fichaje/inspeccion
 // -----------------------------
+
 router.get('/inspeccion', async (req, res) => {
   try {
     const { almacenId, fecha } = req.query;
 
-    const filtro = {};
+    const match = {};
 
     if (almacenId) {
-      filtro.almacenId = almacenId;
+      match.almacenId = almacenId;
     }
 
     if (fecha) {
@@ -373,30 +374,83 @@ router.get('/inspeccion', async (req, res) => {
       const fin = new Date(fecha);
       fin.setHours(23, 59, 59, 999);
 
-      filtro.date = {
-        $gte: inicio,
-        $lte: fin,
-      };
+      match.date = { $gte: inicio, $lte: fin };
     }
 
-    const fichajes = await Fichaje.find(filtro)
-      .populate('user')
-      .sort({ date: 1 });
+    const fichajes = await Fichaje.aggregate([
+      { $match: match },
+      { $sort: { date: 1 } },
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'user',
+          foreignField: '_id',
+          as: 'usuario'
+        }
+      },
+      {
+        $unwind: {
+          path: '$usuario',
+          preserveNullAndEmptyArrays: true
+        }
+      }
+    ]);
+
+    const grupos = {};
+
+    for (const f of fichajes) {
+      const fechaLocal = new Date(f.date).toLocaleDateString('es-ES', {
+        timeZone: 'Europe/Madrid',
+      });
+
+      const horaLocal = new Date(f.date).toLocaleTimeString('es-ES', {
+        timeZone: 'Europe/Madrid',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+
+      const trabajador = f.usuario?.name || `Usuario eliminado (${f.user})`;
+      const pin = f.usuario?.pin || '';
+      const key = `${f.almacenId}-${f.user}-${fechaLocal}`;
+
+      if (!grupos[key]) {
+        grupos[key] = {
+          id: key,
+          trabajador,
+          pin,
+          fecha: fechaLocal,
+          entrada: '',
+          desayunoInicio: '',
+          desayunoFin: '',
+          salida: '',
+          almacenId: f.almacenId,
+        };
+      }
+
+      if (f.type === 'entrada' && !grupos[key].entrada) {
+        grupos[key].entrada = horaLocal;
+      }
+
+      if (f.type === 'desayuno_inicio' && !grupos[key].desayunoInicio) {
+        grupos[key].desayunoInicio = horaLocal;
+      }
+
+      if (f.type === 'desayuno_fin' && !grupos[key].desayunoFin) {
+        grupos[key].desayunoFin = horaLocal;
+      }
+
+      if (f.type === 'salida') {
+        grupos[key].salida = horaLocal;
+      }
+    }
+
+    const registros = Object.values(grupos);
 
     return res.status(200).json({
       ok: true,
-      total: fichajes.length,
-      fichajes: fichajes.map(f => ({
-        id: f._id,
-        trabajador: f.user?.name || 'Sin nombre',
-        pin: f.user?.pin || '',
-        tipo: f.type,
-        fecha: f.date,
-        fechaLocal: new Date(f.date).toLocaleString('es-ES', {
-          timeZone: 'Europe/Madrid',
-        }),
-        almacenId: f.almacenId,
-      })),
+      totalFichajes: fichajes.length,
+      totalRegistros: registros.length,
+      registros,
     });
 
   } catch (err) {
