@@ -487,6 +487,7 @@ router.get('/inspeccion/pdf', async (req, res) => {
       size: 'A4',
       layout: 'landscape',
       margin: 28,
+      autoFirstPage: true,
     });
 
     doc.pipe(res);
@@ -507,6 +508,7 @@ router.get('/inspeccion/pdf', async (req, res) => {
       { title: 'Almacén', width: tableWidth - 160 - 45 - 70 - 55 - 95 - 85 - 55 },
     ];
 
+    let pageNumber = 1;
     function drawTopHeader() {
       doc.rect(0, 0, pageWidth, 78).fill('#0b4f8a');
 
@@ -598,31 +600,30 @@ router.get('/inspeccion/pdf', async (req, res) => {
     }
 
     function drawPageFooter() {
-      const pageNumber = doc.bufferedPageRange().count;
+        doc
+          .font('Helvetica')
+          .fontSize(8)
+          .fillColor('#777')
+          .text(
+            `Generado el ${new Date().toLocaleString('es-ES', { timeZone: 'Europe/Madrid' })}`,
+            margin,
+            pageHeight - 22,
+            { width: tableWidth / 2, align: 'left' }
+          )
+          .text(
+            `Página ${pageNumber}`,
+            margin,
+            pageHeight - 22,
+            { width: tableWidth, align: 'right' }
+          );
 
-      doc
-        .font('Helvetica')
-        .fontSize(8)
-        .fillColor('#777')
-        .text(
-          `Generado el ${new Date().toLocaleString('es-ES', { timeZone: 'Europe/Madrid' })}`,
-          margin,
-          pageHeight - 22,
-          { width: tableWidth / 2, align: 'left' }
-        )
-        .text(
-          `Página ${pageNumber}`,
-          margin,
-          pageHeight - 22,
-          { width: tableWidth, align: 'right' }
-        );
-
-      doc.fillColor('black');
-    }
+        doc.fillColor('black');
+}
 
     function addNewPage() {
       drawPageFooter();
       doc.addPage();
+      pageNumber += 1;
       drawTopHeader();
       drawInfoBox();
       drawTableHeader();
