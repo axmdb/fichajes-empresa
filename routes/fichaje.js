@@ -600,39 +600,53 @@ router.get('/inspeccion/pdf', async (req, res) => {
     }
 
     function drawPageFooter() {
-        doc
-          .font('Helvetica')
-          .fontSize(8)
-          .fillColor('#777')
-          .text(
-            `Generado el ${new Date().toLocaleString('es-ES', { timeZone: 'Europe/Madrid' })}`,
-            margin,
-            pageHeight - 22,
-            { width: tableWidth / 2, align: 'left' }
-          )
-          .text(
-            `Página ${pageNumber}`,
-            margin,
-            pageHeight - 22,
-            { width: tableWidth, align: 'right' }
-          );
+      const footerY = pageHeight - 45;
 
-        doc.fillColor('black');
-}
+      doc
+        .font('Helvetica')
+        .fontSize(8)
+        .fillColor('#777');
+
+      doc.text(
+        `Generado el ${new Date().toLocaleString('es-ES', { timeZone: 'Europe/Madrid' })}`,
+        margin,
+        footerY,
+        {
+          width: tableWidth / 2,
+          align: 'left',
+          lineBreak: false,
+        }
+      );
+
+      doc.text(
+        `Página ${pageNumber}`,
+        margin,
+        footerY,
+        {
+          width: tableWidth,
+          align: 'right',
+          lineBreak: false,
+        }
+      );
+
+      doc.fillColor('black');
+    }
 
     function addNewPage() {
       drawPageFooter();
+
       doc.addPage();
       pageNumber += 1;
+
       drawTopHeader();
       drawInfoBox();
       drawTableHeader();
-    }
+}
 
     function drawRow(row, index) {
       const rowHeight = 24;
 
-      if (y + rowHeight > pageHeight - 40) {
+      if (y + rowHeight > pageHeight - 65) {
         addNewPage();
       }
 
