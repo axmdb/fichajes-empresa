@@ -478,7 +478,6 @@ router.get('/inspeccion/pdf', async (req, res) => {
 
     const registros = resultado.registros;
     const nombreAlmacen = getNombreAlmacen(almacenId);
-
     const fileName = `fichajes_${clean(nombreAlmacen)}_${Date.now()}.pdf`;
 
     res.setHeader('Content-Type', 'application/pdf');
@@ -487,30 +486,15 @@ router.get('/inspeccion/pdf', async (req, res) => {
     const doc = new PDFDocument({
       size: 'A4',
       layout: 'landscape',
-      margin: 30,
+      margin: 28,
     });
 
     doc.pipe(res);
 
-    doc
-      .fontSize(18)
-      .font('Helvetica-Bold')
-      .text('PANEL DE FICHAJES', { align: 'center' });
-
-    doc.moveDown(0.5);
-
-    doc
-      .fontSize(10)
-      .font('Helvetica')
-      .text(`Almacén: ${nombreAlmacen}`, { align: 'center' })
-      .text(`Trabajador / PIN: ${trabajador || 'Todos'}`, { align: 'center' })
-      .text(`Desde: ${desde || '-'}   Hasta: ${hasta || '-'}`, { align: 'center' })
-      .text(`Total registros: ${registros.length}`, { align: 'center' });
-
-    doc.moveDown(1);
-
-    const startX = 30;
-    let y = doc.y;
+    const pageWidth = doc.page.width;
+    const pageHeight = doc.page.height;
+    const margin = 28;
+    const tableWidth = pageWidth - margin * 2;
 
     const columns = [
       { title: 'Trabajador', width: 160 },
@@ -520,43 +504,141 @@ router.get('/inspeccion/pdf', async (req, res) => {
       { title: 'Desayuno inicio', width: 95 },
       { title: 'Desayuno fin', width: 85 },
       { title: 'Salida', width: 55 },
-      { title: 'Almacén', width: 160 },
+      { title: 'Almacén', width: tableWidth - 160 - 45 - 70 - 55 - 95 - 85 - 55 },
     ];
 
-    function drawHeader() {
-      let x = startX;
+    function drawTopHeader() {
+      doc.rect(0, 0, pageWidth, 78).fill('#0b4f8a');
+
+      doc
+        .fillColor('white')
+        .font('Helvetica-Bold')
+        .fontSize(22)
+        .text('PANEL DE FICHAJES', margin, 20, {
+          width: tableWidth,
+          align: 'center',
+        });
+
+      doc
+        .font('Helvetica')
+        .fontSize(9)
+        .text('Registro de entradas, salidas y desayunos', margin, 48, {
+          width: tableWidth,
+          align: 'center',
+        });
+
+      doc.fillColor('black');
+      doc.y = 95;
+    }
+
+    function drawInfoBox() {
+      const boxX = margin;
+      const boxY = doc.y;
+      const boxH = 58;
+
+      doc
+        .roundedRect(boxX, boxY, tableWidth, boxH, 8)
+        .fillAndStroke('#f0f8ff', '#c8dff2');
+
+      doc
+        .fillColor('#222')
+        .font('Helvetica-Bold')
+        .fontSize(10)
+        .text(`Almacén: ${nombreAlmacen}`, boxX + 14, boxY + 12);
+
+      doc
+        .font('Helvetica')
+        .fontSize(9)
+        .text(`Trabajador / PIN: ${trabajador || 'Todos'}`, boxX + 14, boxY + 30)
+        .text(`Desde: ${desde || '-'}    Hasta: ${hasta || '-'}`, boxX + 330, boxY + 30);
+
+      doc
+        .roundedRect(boxX + tableWidth - 145, boxY + 14, 125, 30, 6)
+        .fill('#0b4f8a');
+
+      doc
+        .fillColor('white')
+        .font('Helvetica-Bold')
+        .fontSize(11)
+        .text(`${registros.length} registros`, boxX + tableWidth - 145, boxY + 23, {
+          width: 125,
+          align: 'center',
+        });
+
+      doc.fillColor('black');
+      doc.y = boxY + boxH + 18;
+    }
+
+    let y;
+
+    function drawTableHeader() {
+      y = doc.y;
+      let x = margin;
+
+      doc
+        .roundedRect(margin, y, tableWidth, 22, 4)
+        .fill('#222');
 
       doc
         .font('Helvetica-Bold')
         .fontSize(8)
         .fillColor('white');
 
-      doc
-        .rect(startX, y, columns.reduce((sum, c) => sum + c.width, 0), 20)
-        .fill('#222');
-
       for (const col of columns) {
-        doc.text(col.title, x + 3, y + 6, {
-          width: col.width - 6,
+        doc.text(col.title, x + 4, y + 7, {
+          width: col.width - 8,
           align: 'left',
         });
         x += col.width;
       }
 
-      y += 20;
+      y += 22;
+      doc.y = y;
       doc.fillColor('black');
     }
 
-    function drawRow(row) {
+    function drawPageFooter() {
+      const pageNumber = doc.bufferedPageRange().count;
+
+      doc
+        .font('Helvetica')
+        .fontSize(8)
+        .fillColor('#777')
+        .text(
+          `Generado el ${new Date().toLocaleString('es-ES', { timeZone: 'Europe/Madrid' })}`,
+          margin,
+          pageHeight - 22,
+          { width: tableWidth / 2, align: 'left' }
+        )
+        .text(
+          `Página ${pageNumber}`,
+          margin,
+          pageHeight - 22,
+          { width: tableWidth, align: 'right' }
+        );
+
+      doc.fillColor('black');
+    }
+
+    function addNewPage() {
+      drawPageFooter();
+      doc.addPage();
+      drawTopHeader();
+      drawInfoBox();
+      drawTableHeader();
+    }
+
+    function drawRow(row, index) {
       const rowHeight = 24;
 
-      if (y + rowHeight > doc.page.height - 30) {
-        doc.addPage();
-        y = 30;
-        drawHeader();
+      if (y + rowHeight > pageHeight - 40) {
+        addNewPage();
       }
 
-      let x = startX;
+      let x = margin;
+      const bg = index % 2 === 0 ? '#ffffff' : '#f7f7f7';
+
+      doc.rect(margin, y, tableWidth, rowHeight).fill(bg);
 
       const values = [
         row.trabajador,
@@ -571,45 +653,42 @@ router.get('/inspeccion/pdf', async (req, res) => {
 
       doc
         .font('Helvetica')
-        .fontSize(7)
-        .fillColor('black');
+        .fontSize(7.5)
+        .fillColor('#222');
 
-      values.forEach((value, index) => {
+      values.forEach((value, colIndex) => {
         doc
-          .rect(x, y, columns[index].width, rowHeight)
-          .stroke('#cccccc');
+          .rect(x, y, columns[colIndex].width, rowHeight)
+          .stroke('#dddddd');
 
-        doc.text(String(value), x + 3, y + 6, {
-          width: columns[index].width - 6,
-          height: rowHeight - 4,
+        doc.text(String(value), x + 4, y + 7, {
+          width: columns[colIndex].width - 8,
+          height: rowHeight - 6,
+          ellipsis: true,
         });
 
-        x += columns[index].width;
+        x += columns[colIndex].width;
       });
 
       y += rowHeight;
+      doc.y = y;
     }
 
-    drawHeader();
+    drawTopHeader();
+    drawInfoBox();
+    drawTableHeader();
 
     if (registros.length === 0) {
       doc
         .fontSize(12)
         .font('Helvetica')
-        .fillColor('black')
-        .text('No hay registros con los filtros seleccionados.', startX, y + 20);
+        .fillColor('#444')
+        .text('No hay registros con los filtros seleccionados.', margin, y + 20);
     } else {
-      registros.forEach(drawRow);
+      registros.forEach((row, index) => drawRow(row, index));
     }
 
-    doc.moveDown(2);
-    doc
-      .fontSize(8)
-      .fillColor('gray')
-      .text(`Documento generado el ${new Date().toLocaleString('es-ES', { timeZone: 'Europe/Madrid' })}`, {
-        align: 'right',
-      });
-
+    drawPageFooter();
     doc.end();
 
   } catch (err) {
