@@ -5,6 +5,7 @@ const User = require('../models/User');
 const Fichaje = require('../models/Fichaje');
 const ExcelJS = require('exceljs');
 const AWS = require('aws-sdk');
+const PDFDocument = require('pdfkit');
 
 const s3 = new AWS.S3({
   accessKeyId: process.env.AWS_ACCESS_KEY_ID,
@@ -12,7 +13,6 @@ const s3 = new AWS.S3({
   region: process.env.AWS_REGION,
 });
 
-// Limpia nombres para carpetas/archivos
 function clean(str) {
   return String(str)
     .normalize('NFD')
@@ -20,7 +20,6 @@ function clean(str) {
     .replace(/[^a-zA-Z0-9]/g, '_');
 }
 
-// Rango del día
 function getDayRange(date = new Date()) {
   const inicio = new Date(date);
   inicio.setHours(0, 0, 0, 0);
@@ -31,8 +30,153 @@ function getDayRange(date = new Date()) {
   return { inicio, fin };
 }
 
+function getMonthName(date) {
+  const months = [
+    'ENERO', 'FEBRERO', 'MARZO', 'ABRIL', 'MAYO', 'JUNIO',
+    'JULIO', 'AGOSTO', 'SEPTIEMBRE', 'OCTUBRE', 'NOVIEMBRE', 'DICIEMBRE'
+  ];
+  return months[date.getMonth()];
+}
+
+function parseFechaDDMMYYYY(fecha) {
+  if (!fecha) return null;
+
+  const [dia, mes, anio] = String(fecha).split('/').map(Number);
+  if (!dia || !mes || !anio) return null;
+
+  return new Date(anio, mes - 1, dia);
+}
+
+function getNombreAlmacen(id) {
+  const almacenes = {
+    almacen1: 'FABRICA TARRAGONA',
+    almacen2: 'FABRICA REUS',
+    almacen3: 'EMPANADAS ALMA TARRAGONA',
+    almacen4: 'EMPANADAS ALMA SALOU',
+    almacen5: 'ALMACEN TARRAGONA',
+    almacen6: 'ALMACEN ANDORRA',
+  };
+
+  return almacenes[id] || id;
+}
+
+async function obtenerRegistrosInspeccion({ almacenId, trabajador, desde, hasta }) {
+  const match = {};
+
+  if (almacenId) {
+    match.almacenId = almacenId;
+  }
+
+  const desdeDate = parseFechaDDMMYYYY(desde);
+  const hastaDate = parseFechaDDMMYYYY(hasta);
+
+  if (desdeDate || hastaDate) {
+    match.date = {};
+
+    if (desdeDate) {
+      desdeDate.setHours(0, 0, 0, 0);
+      match.date.$gte = desdeDate;
+    }
+
+    if (hastaDate) {
+      hastaDate.setHours(23, 59, 59, 999);
+      match.date.$lte = hastaDate;
+    }
+  }
+
+  const fichajes = await Fichaje.aggregate([
+    { $match: match },
+    { $sort: { date: 1 } },
+    {
+      $lookup: {
+        from: 'users',
+        localField: 'user',
+        foreignField: '_id',
+        as: 'usuario'
+      }
+    },
+    {
+      $unwind: {
+        path: '$usuario',
+        preserveNullAndEmptyArrays: true
+      }
+    }
+  ]);
+
+  const grupos = {};
+
+  for (const f of fichajes) {
+    const fechaLocal = new Date(f.date).toLocaleDateString('es-ES', {
+      timeZone: 'Europe/Madrid',
+    });
+
+    const horaLocal = new Date(f.date).toLocaleTimeString('es-ES', {
+      timeZone: 'Europe/Madrid',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+
+    const nombreTrabajador = f.usuario?.name || `Usuario eliminado (${f.user})`;
+    const pin = f.usuario?.pin || '';
+    const key = `${f.almacenId}-${f.user}-${fechaLocal}`;
+
+    if (!grupos[key]) {
+      grupos[key] = {
+        id: key,
+        trabajador: nombreTrabajador,
+        pin,
+        fecha: fechaLocal,
+        entrada: '',
+        desayunoInicio: '',
+        desayunoFin: '',
+        salida: '',
+        almacenId: f.almacenId,
+      };
+    }
+
+    if (f.type === 'entrada' && !grupos[key].entrada) {
+      grupos[key].entrada = horaLocal;
+    }
+
+    if (f.type === 'desayuno_inicio' && !grupos[key].desayunoInicio) {
+      grupos[key].desayunoInicio = horaLocal;
+    }
+
+    if (f.type === 'desayuno_fin' && !grupos[key].desayunoFin) {
+      grupos[key].desayunoFin = horaLocal;
+    }
+
+    if (f.type === 'salida') {
+      grupos[key].salida = horaLocal;
+    }
+  }
+
+  let registros = Object.values(grupos);
+
+  if (trabajador) {
+    const texto = String(trabajador).trim().toLowerCase();
+
+    registros = registros.filter(r =>
+      r.trabajador.toLowerCase().includes(texto) ||
+      r.pin.toLowerCase().includes(texto)
+    );
+  }
+
+  registros.sort((a, b) => {
+    const fechaA = parseFechaDDMMYYYY(a.fecha);
+    const fechaB = parseFechaDDMMYYYY(b.fecha);
+    return fechaB - fechaA;
+  });
+
+  return {
+    totalFichajes: fichajes.length,
+    totalRegistros: registros.length,
+    registros,
+  };
+}
+
 /* -----------------------------------
- *  POST /api/fichaje
+ * POST /api/fichaje
  * -----------------------------------*/
 router.post('/', async (req, res) => {
   console.log("\n\n==============================");
@@ -49,11 +193,8 @@ router.post('/', async (req, res) => {
   try {
     const user = await User.findOne({ pin, almacenId });
     if (!user) {
-      console.log("❌ Usuario NO encontrado con ese PIN y almacen");
       return res.status(404).json({ message: 'PIN incorrecto o no pertenece a este almacén' });
     }
-
-    console.log("✔ Usuario encontrado:", user.name);
 
     const { inicio, fin } = getDayRange();
 
@@ -63,14 +204,6 @@ router.post('/', async (req, res) => {
       date: { $gte: inicio, $lte: fin },
     }).sort({ date: 1 });
 
-    console.log("📊 Fichajes HOY:", fichajes.length);
-    if (fichajes.length) {
-      console.log(
-        fichajes.map(f => `${f.type} - ${f.date.toISOString()}`).join("\n")
-      );
-    }
-
-    // Clasificación
     const entradas = fichajes.filter(f => f.type === 'entrada');
     const salidas = fichajes.filter(f => f.type === 'salida');
     const desayunosInicio = fichajes.filter(f => f.type === 'desayuno_inicio');
@@ -80,14 +213,6 @@ router.post('/', async (req, res) => {
     const ultimaSalida = salidas[salidas.length - 1] || null;
     const ultimoDesayunoInicio = desayunosInicio[desayunosInicio.length - 1] || null;
     const ultimoDesayunoFin = desayunosFin[desayunosFin.length - 1] || null;
-
-    console.log("📌 Estado actual del usuario:");
-    console.log(" - ultimaEntrada:", ultimaEntrada?.date);
-    console.log(" - ultimaSalida:", ultimaSalida?.date);
-    console.log(" - desayuno_inicio:", ultimoDesayunoInicio?.date);
-    console.log(" - desayuno_fin:", ultimoDesayunoFin?.date);
-
-    // ---------------- VALIDACIONES ----------------
 
     if (type === 'entrada') {
       if (ultimaEntrada && (!ultimaSalida || ultimaEntrada.date > ultimaSalida.date)) {
@@ -140,8 +265,6 @@ router.post('/', async (req, res) => {
       }
     }
 
-    // ---------------- GUARDAR FICHAJE ----------------
-
     const registro = new Fichaje({
       user: user._id,
       almacenId,
@@ -150,11 +273,6 @@ router.post('/', async (req, res) => {
     });
 
     await registro.save();
-    console.log("✔ Fichaje guardado:", registro.type, registro.date);
-
-    // ---------------- ACTUALIZAR ESTADO ----------------
-    // Estos valores los devolvemos por si algún día modificas el frontend,
-    // pero ahora mismo la tablet se basa sobre todo en GET /estado.
 
     const haHechoEntrada =
       type === 'entrada'
@@ -171,7 +289,6 @@ router.post('/', async (req, res) => {
         : !!ultimoDesayunoInicio &&
           (!ultimoDesayunoFin || ultimoDesayunoInicio.date > ultimoDesayunoFin.date);
 
-    // ---------------- EXCEL ----------------
     await generateUserExcel(user, registro);
 
     return res.status(200).json({
@@ -189,14 +306,10 @@ router.post('/', async (req, res) => {
 });
 
 /* -----------------------------------
- *  GET /api/fichaje/estado
- *  (Usado por la app para saber si mostrar
- *   "Inicio desayuno" o "Fin desayuno")
+ * GET /api/fichaje/estado
  * -----------------------------------*/
 router.get('/estado', async (req, res) => {
   const { pin, almacenId } = req.query;
-
-  console.log("\n🔎 GET /api/fichaje/estado", req.query);
 
   if (!pin || !almacenId) {
     return res.status(400).json({ message: 'Faltan PIN o almacenId' });
@@ -205,7 +318,6 @@ router.get('/estado', async (req, res) => {
   try {
     const user = await User.findOne({ pin, almacenId });
     if (!user) {
-      console.log("❌ Usuario no encontrado en /estado");
       return res.status(404).json({ message: 'Usuario no encontrado' });
     }
 
@@ -216,8 +328,6 @@ router.get('/estado', async (req, res) => {
       almacenId,
       date: { $gte: inicio, $lte: fin },
     }).sort({ date: 1 });
-
-    console.log("📊 [ESTADO] Fichajes HOY:", fichajes.length);
 
     const entradas = fichajes.filter(f => f.type === 'entrada');
     const salidas = fichajes.filter(f => f.type === 'salida');
@@ -236,8 +346,6 @@ router.get('/estado', async (req, res) => {
       !!ultimoDesayunoInicio &&
       (!ultimoDesayunoFin || ultimoDesayunoInicio.date > ultimoDesayunoFin.date);
 
-    console.log("📌 [ESTADO] haHechoEntrada:", haHechoEntrada, "desayunoIniciado:", desayunoIniciado);
-
     return res.status(200).json({ haHechoEntrada, desayunoIniciado });
   } catch (err) {
     console.error('[GET /api/fichaje/estado] ERROR:', err);
@@ -245,54 +353,36 @@ router.get('/estado', async (req, res) => {
   }
 });
 
-// Nombre del mes en mayúsculas (igual que firma.js)
-function getMonthName(date) {
-  const months = [
-    'ENERO', 'FEBRERO', 'MARZO', 'ABRIL', 'MAYO', 'JUNIO',
-    'JULIO', 'AGOSTO', 'SEPTIEMBRE', 'OCTUBRE', 'NOVIEMBRE', 'DICIEMBRE'
-  ];
-  return months[date.getMonth()];
-}
-
-/* GENERAR / ACTUALIZAR EXCEL MENSUAL POR USUARIO */
+/* -----------------------------------
+ * Excel mensual por usuario
+ * -----------------------------------*/
 async function generateUserExcel(user, fichaje) {
-  console.log("\n📄 GENERANDO EXCEL (MENSUAL)...");
-
   const now = new Date(fichaje.date);
   const yyyy = now.getFullYear();
 
-  // carpeta MES_AÑO (ej: DICIEMBRE_2025)
   const mesNombre = getMonthName(now);
   const carpetaMes = `${mesNombre}_${yyyy}`;
 
-  // Carpeta usuario
   const userFolder = `${clean(user.name)}_${user.pin}`;
-
-  // ✅ Un solo Excel por mes
   const fileName = `fichajes_${carpetaMes}_${userFolder}.xlsx`;
-
-  // ✅ Ruta final: almacen/usuario/MES_AÑO/excel.xlsx
   const key = `${user.almacenId}/${userFolder}/${carpetaMes}/${fileName}`;
-
-  console.log("📌 S3 KEY:", key);
 
   const workbook = new ExcelJS.Workbook();
   let sheet;
 
   function ensureColumns(ws) {
     if (!ws.columns || ws.columns.length === 0) {
-      console.log("🧱 Definiendo columnas (no había ninguna)...");
       ws.columns = [
         { header: 'Tipo', key: 'type', width: 20 },
         { header: 'Fecha y Hora', key: 'date', width: 30 },
       ];
     } else {
-      console.log("🧱 Ajustando keys de columnas existentes...");
       if (ws.columns[0]) {
         ws.columns[0].key = 'type';
         ws.columns[0].header = ws.columns[0].header || 'Tipo';
         ws.columns[0].width = ws.columns[0].width || 20;
       }
+
       if (ws.columns[1]) {
         ws.columns[1].key = 'date';
         ws.columns[1].header = ws.columns[1].header || 'Fecha y Hora';
@@ -302,45 +392,33 @@ async function generateUserExcel(user, fichaje) {
   }
 
   try {
-    console.log("🔍 Intentando cargar archivo desde S3...");
     const existing = await s3
       .getObject({ Bucket: process.env.AWS_BUCKET_NAME, Key: key })
       .promise();
 
-    console.log("✔ Archivo encontrado, cargando...");
     await workbook.xlsx.load(existing.Body);
 
     sheet = workbook.getWorksheet('Fichajes');
     if (!sheet) {
-      console.log("⚠ Hoja 'Fichajes' inexistente, creando...");
       sheet = workbook.addWorksheet('Fichajes');
     }
 
     ensureColumns(sheet);
-    console.log("📄 Filas antes de añadir:", sheet.rowCount);
 
   } catch (err) {
-    console.log("⚠ Archivo NO encontrado, creando nuevo:", err.code);
-
     sheet = workbook.addWorksheet('Fichajes');
     ensureColumns(sheet);
-
-    console.log("📄 Hoja nueva creada (solo cabeceras).");
   }
 
   const fechaHora = now.toLocaleString('es-ES', { timeZone: 'Europe/Madrid' });
-  console.log("➕ Añadiendo fila:", fichaje.type, fechaHora);
 
   sheet.addRow({
     type: fichaje.type,
     date: fechaHora,
   });
 
-  console.log("📄 Filas después de añadir:", sheet.rowCount);
-
   const buffer = await workbook.xlsx.writeBuffer();
 
-  console.log("⬆ Subiendo archivo a S3...");
   await s3
     .upload({
       Bucket: process.env.AWS_BUCKET_NAME,
@@ -349,108 +427,25 @@ async function generateUserExcel(user, fichaje) {
       ContentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     })
     .promise();
-
-  console.log("✔ Excel mensual subido correctamente");
 }
 
-// -----------------------------
-// GET /api/fichaje/inspeccion
-// -----------------------------
-
+/* -----------------------------------
+ * GET /api/fichaje/inspeccion
+ * -----------------------------------*/
 router.get('/inspeccion', async (req, res) => {
   try {
-    const { almacenId, fecha } = req.query;
+    const { almacenId, trabajador, desde, hasta } = req.query;
 
-    const match = {};
-
-    if (almacenId) {
-      match.almacenId = almacenId;
-    }
-
-    if (fecha) {
-      const inicio = new Date(fecha);
-      inicio.setHours(0, 0, 0, 0);
-
-      const fin = new Date(fecha);
-      fin.setHours(23, 59, 59, 999);
-
-      match.date = { $gte: inicio, $lte: fin };
-    }
-
-    const fichajes = await Fichaje.aggregate([
-      { $match: match },
-      { $sort: { date: 1 } },
-      {
-        $lookup: {
-          from: 'users',
-          localField: 'user',
-          foreignField: '_id',
-          as: 'usuario'
-        }
-      },
-      {
-        $unwind: {
-          path: '$usuario',
-          preserveNullAndEmptyArrays: true
-        }
-      }
-    ]);
-
-    const grupos = {};
-
-    for (const f of fichajes) {
-      const fechaLocal = new Date(f.date).toLocaleDateString('es-ES', {
-        timeZone: 'Europe/Madrid',
-      });
-
-      const horaLocal = new Date(f.date).toLocaleTimeString('es-ES', {
-        timeZone: 'Europe/Madrid',
-        hour: '2-digit',
-        minute: '2-digit',
-      });
-
-      const trabajador = f.usuario?.name || `Usuario eliminado (${f.user})`;
-      const pin = f.usuario?.pin || '';
-      const key = `${f.almacenId}-${f.user}-${fechaLocal}`;
-
-      if (!grupos[key]) {
-        grupos[key] = {
-          id: key,
-          trabajador,
-          pin,
-          fecha: fechaLocal,
-          entrada: '',
-          desayunoInicio: '',
-          desayunoFin: '',
-          salida: '',
-          almacenId: f.almacenId,
-        };
-      }
-
-      if (f.type === 'entrada' && !grupos[key].entrada) {
-        grupos[key].entrada = horaLocal;
-      }
-
-      if (f.type === 'desayuno_inicio' && !grupos[key].desayunoInicio) {
-        grupos[key].desayunoInicio = horaLocal;
-      }
-
-      if (f.type === 'desayuno_fin' && !grupos[key].desayunoFin) {
-        grupos[key].desayunoFin = horaLocal;
-      }
-
-      if (f.type === 'salida') {
-        grupos[key].salida = horaLocal;
-      }
-    }
-
-    const registros = Object.values(grupos);
+    const resultado = await obtenerRegistrosInspeccion({
+      almacenId,
+      trabajador,
+      desde,
+      hasta,
+    });
 
     return res.status(200).json({
       ok: true,
-      totalFichajes: fichajes.length,
-      totalRegistros: registros.length,
-      registros,
+      ...resultado,
     });
 
   } catch (err) {
@@ -460,6 +455,166 @@ router.get('/inspeccion', async (req, res) => {
       message: 'Error obteniendo fichajes para inspección',
       error: err.message,
     });
+  }
+});
+
+/* -----------------------------------
+ * GET /api/fichaje/inspeccion/pdf
+ * -----------------------------------*/
+router.get('/inspeccion/pdf', async (req, res) => {
+  try {
+    const { token, almacenId, trabajador, desde, hasta } = req.query;
+
+    if (token !== process.env.API_SECRET) {
+      return res.status(401).send('No autorizado');
+    }
+
+    const resultado = await obtenerRegistrosInspeccion({
+      almacenId,
+      trabajador,
+      desde,
+      hasta,
+    });
+
+    const registros = resultado.registros;
+    const nombreAlmacen = getNombreAlmacen(almacenId);
+
+    const fileName = `fichajes_${clean(nombreAlmacen)}_${Date.now()}.pdf`;
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+
+    const doc = new PDFDocument({
+      size: 'A4',
+      layout: 'landscape',
+      margin: 30,
+    });
+
+    doc.pipe(res);
+
+    doc
+      .fontSize(18)
+      .font('Helvetica-Bold')
+      .text('PANEL DE FICHAJES', { align: 'center' });
+
+    doc.moveDown(0.5);
+
+    doc
+      .fontSize(10)
+      .font('Helvetica')
+      .text(`Almacén: ${nombreAlmacen}`, { align: 'center' })
+      .text(`Trabajador / PIN: ${trabajador || 'Todos'}`, { align: 'center' })
+      .text(`Desde: ${desde || '-'}   Hasta: ${hasta || '-'}`, { align: 'center' })
+      .text(`Total registros: ${registros.length}`, { align: 'center' });
+
+    doc.moveDown(1);
+
+    const startX = 30;
+    let y = doc.y;
+
+    const columns = [
+      { title: 'Trabajador', width: 160 },
+      { title: 'PIN', width: 45 },
+      { title: 'Fecha', width: 70 },
+      { title: 'Entrada', width: 55 },
+      { title: 'Desayuno inicio', width: 95 },
+      { title: 'Desayuno fin', width: 85 },
+      { title: 'Salida', width: 55 },
+      { title: 'Almacén', width: 160 },
+    ];
+
+    function drawHeader() {
+      let x = startX;
+
+      doc
+        .font('Helvetica-Bold')
+        .fontSize(8)
+        .fillColor('white');
+
+      doc
+        .rect(startX, y, columns.reduce((sum, c) => sum + c.width, 0), 20)
+        .fill('#222');
+
+      for (const col of columns) {
+        doc.text(col.title, x + 3, y + 6, {
+          width: col.width - 6,
+          align: 'left',
+        });
+        x += col.width;
+      }
+
+      y += 20;
+      doc.fillColor('black');
+    }
+
+    function drawRow(row) {
+      const rowHeight = 24;
+
+      if (y + rowHeight > doc.page.height - 30) {
+        doc.addPage();
+        y = 30;
+        drawHeader();
+      }
+
+      let x = startX;
+
+      const values = [
+        row.trabajador,
+        row.pin || '-',
+        row.fecha,
+        row.entrada || '-',
+        row.desayunoInicio || '-',
+        row.desayunoFin || '-',
+        row.salida || '-',
+        getNombreAlmacen(row.almacenId),
+      ];
+
+      doc
+        .font('Helvetica')
+        .fontSize(7)
+        .fillColor('black');
+
+      values.forEach((value, index) => {
+        doc
+          .rect(x, y, columns[index].width, rowHeight)
+          .stroke('#cccccc');
+
+        doc.text(String(value), x + 3, y + 6, {
+          width: columns[index].width - 6,
+          height: rowHeight - 4,
+        });
+
+        x += columns[index].width;
+      });
+
+      y += rowHeight;
+    }
+
+    drawHeader();
+
+    if (registros.length === 0) {
+      doc
+        .fontSize(12)
+        .font('Helvetica')
+        .fillColor('black')
+        .text('No hay registros con los filtros seleccionados.', startX, y + 20);
+    } else {
+      registros.forEach(drawRow);
+    }
+
+    doc.moveDown(2);
+    doc
+      .fontSize(8)
+      .fillColor('gray')
+      .text(`Documento generado el ${new Date().toLocaleString('es-ES', { timeZone: 'Europe/Madrid' })}`, {
+        align: 'right',
+      });
+
+    doc.end();
+
+  } catch (err) {
+    console.error('Error generando PDF de inspección:', err);
+    return res.status(500).send('Error generando PDF');
   }
 });
 

@@ -56,7 +56,11 @@ mongoose.connection.on('reconnected', () => {
 // ---------------------------------------------
 // 🔐 Rutas protegidas
 // ---------------------------------------------
-app.use('/api/fichaje', authMiddleware, fichajeRoutes);
+app.use('/api/fichaje', (req, res, next) => {
+  if (req.path === '/inspeccion/pdf') return next();
+  return authMiddleware(req, res, next);
+ }, fichajeRoutes);
+
 app.use('/api/firma', authMiddleware, firmaRoutes);
 app.use('/api/users', authMiddleware, userRoutes);
 
